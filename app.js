@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '289';
+var BUILD = '290';
 (function() {
   var vEl = document.getElementById('sb-versao');
   if (vEl) vEl.textContent = 'v' + BUILD;
@@ -6875,7 +6875,8 @@ function confirmarStatusPlano() {
 
   _planosCache = list;
   try { localStorage.setItem(PLANO_KEY, JSON.stringify(list)); } catch(e) {}
-  db.collection('planos').doc(id).set(updatedPlano).then(function(){
+  var _updFieldsStatus = Object.assign({}, extras, { status: novoStatus, historico: updatedPlano.historico });
+  db.collection('planos').doc(id).set(_updFieldsStatus, {merge:true}).then(function(){
     var msgs = {andamento:'▶ Plano em andamento!', aberto:'🔄 Plano reaberto!'};
     showToast(msgs[novoStatus] || 'Status atualizado');
   }).catch(function(err){
@@ -6946,7 +6947,14 @@ function confirmarConclusaoPlano() {
 
   _planosCache = list;
   try { localStorage.setItem(PLANO_KEY, JSON.stringify(list)); } catch(e) {}
-  db.collection('planos').doc(id).set(updatedPlano).then(function(){
+  var _updFieldsConcl = {
+    status: 'resolvido',
+    resolvidoEm: updatedPlano.resolvidoEm,
+    resolvidoTimestamp: updatedPlano.resolvidoTimestamp,
+    historico: updatedPlano.historico,
+    conclusao: updatedPlano.conclusao
+  };
+  db.collection('planos').doc(id).set(_updFieldsConcl, {merge:true}).then(function(){
     showToast('✅ Plano resolvido!');
   }).catch(function(err){
     showToast('⚠ Firebase: ' + (err && err.code ? err.code : 'erro ao salvar'));
@@ -7251,7 +7259,7 @@ function salvarProrrogacao() {
   var list = getPlanos().map(function(p){ return p.id===updated.id?updated:p; });
   _planosCache = list;
   try { localStorage.setItem(PLANO_KEY, JSON.stringify(list)); } catch(e) {}
-  db.collection('planos').doc(updated.id).set(updated).catch(function(){});
+  db.collection('planos').doc(updated.id).set({ prorrogacoes: updated.prorrogacoes }, {merge:true}).catch(function(){});
   renderPlanos(planoFiltroAtual);
   renderAlertaPlanos();
   showToast('⏳ Solicitação enviada! Aguardando aprovação da Central.');
@@ -7272,7 +7280,9 @@ function avaliarProrrogacao(planoId, prorroId, aprovado) {
   var list = getPlanos().map(function(p){ return p.id===updated.id?updated:p; });
   _planosCache = list;
   try { localStorage.setItem(PLANO_KEY, JSON.stringify(list)); } catch(e) {}
-  db.collection('planos').doc(updated.id).set(updated).catch(function(){});
+  var _updFieldsProrr = { prorrogacoes: prorrogacoes };
+  if (aprovado && prorrog && plano.prazoFim) _updFieldsProrr.prazoFim = updated.prazoFim;
+  db.collection('planos').doc(updated.id).set(_updFieldsProrr, {merge:true}).catch(function(){});
   renderPlanos(planoFiltroAtual);
   if (centralTabAtual==='plano') renderCentralPlanos();
   showToast(aprovado?'✅ Prorrogação aprovada! Prazo estendido.':'❌ Prorrogação rejeitada.');
@@ -7880,7 +7890,7 @@ function prorrogarAdmin(planoId) {
   var list = getPlanos().map(function(p){ return p.id===planoId ? updated : p; });
   _planosCache = list;
   try { localStorage.setItem(PLANO_KEY, JSON.stringify(list)); } catch(e) {}
-  db.collection('planos').doc(planoId).set(updated).catch(function(){});
+  db.collection('planos').doc(planoId).set({ prazoFim: novoPrazo, historico: hist }, {merge:true}).catch(function(){});
   renderPlanos(planoFiltroAtual);
   if (centralTabAtual==='plano') renderCentralPlanos();
   showToast('✅ Prazo estendido em +'+h+'h!');
