@@ -1,4 +1,5 @@
 ﻿*{box-sizing:border-box;margin:0;padding:0}
+html,body{max-width:100vw;overflow-x:hidden}
 :root{
   --g:#1a7a4a;--g2:#2d9e62;--g3:#e8f5ee;
   --r:#c0392b;--r2:#fdecea;
