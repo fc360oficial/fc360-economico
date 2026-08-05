@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '293';
+var BUILD = '294';
 (function() {
   var vEl = document.getElementById('sb-versao');
   if (vEl) vEl.textContent = 'v' + BUILD;
@@ -7419,21 +7419,22 @@ function _renderClientesLista() {
         '</div>' +
         '<span id="verstatus-'+c.id+'" style="font-size:10px;font-weight:700;padding:4px 10px;border-radius:20px;background:#f0f0f0;color:#999;white-space:nowrap;letter-spacing:.5px">⏳ verificando</span>' +
       '</div>' +
-      // ── Linha de métricas
-      '<div style="padding:10px 18px;display:flex;gap:0;border-bottom:1px solid var(--gray2);background:var(--gray)">' +
-        '<div style="flex:1;padding-right:14px;border-right:1px solid var(--gray2)">' +
+      // ── Linha de métricas (empilha sozinha em telas estreitas — sem media query,
+      // só flex-wrap com largura mínima por bloco)
+      '<div style="padding:10px 18px;display:flex;flex-wrap:wrap;gap:12px;border-bottom:1px solid var(--gray2);background:var(--gray)">' +
+        '<div style="flex:1 1 130px;min-width:130px">' +
           '<div style="font-size:9px;font-weight:700;letter-spacing:1.5px;color:var(--t3);margin-bottom:4px">LICENÇA</div>' +
-          '<span style="font-size:12px;font-weight:700;color:'+licCor+';background:'+licBg+';padding:3px 8px;border-radius:6px">'+licTxt+'</span>' +
+          '<span style="font-size:12px;font-weight:700;color:'+licCor+';background:'+licBg+';padding:3px 8px;border-radius:6px;white-space:nowrap">'+licTxt+'</span>' +
         '</div>' +
-        '<div style="flex:1;padding-left:14px;padding-right:14px;border-right:1px solid var(--gray2)">' +
+        '<div style="flex:1 1 90px;min-width:90px">' +
           '<div style="font-size:9px;font-weight:700;letter-spacing:1.5px;color:var(--t3);margin-bottom:4px">VERSÃO</div>' +
           '<span id="ver-'+c.id+'" style="font-family:monospace;font-size:13px;font-weight:700;color:#999">⏳</span>' +
         '</div>' +
-        '<div style="flex:2;padding-left:14px">' +
+        '<div style="flex:2 1 200px;min-width:200px">' +
           '<div style="font-size:9px;font-weight:700;letter-spacing:1.5px;color:var(--t3);margin-bottom:4px">URL DO CLIENTE</div>' +
-          '<div style="display:flex;align-items:center;gap:6px">' +
-            '<span id="url-'+c.id+'" style="font-size:11px;color:var(--t2);font-family:monospace">—</span>' +
-            '<button onclick="var u=document.getElementById(\'url-'+safeId+'\').textContent;navigator.clipboard.writeText(u).then(function(){showToast(\'✅ URL copiada!\');})" style="background:none;border:1px solid var(--gray2);border-radius:5px;padding:2px 6px;font-size:10px;color:var(--t2);cursor:pointer">copiar</button>' +
+          '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">' +
+            '<span id="url-'+c.id+'" style="font-size:11px;color:var(--t2);font-family:monospace;word-break:break-all">—</span>' +
+            '<button onclick="var u=document.getElementById(\'url-'+safeId+'\').textContent;navigator.clipboard.writeText(u).then(function(){showToast(\'✅ URL copiada!\');})" style="background:none;border:1px solid var(--gray2);border-radius:5px;padding:2px 6px;font-size:10px;color:var(--t2);cursor:pointer;flex-shrink:0">copiar</button>' +
           '</div>' +
         '</div>' +
       '</div>' +
