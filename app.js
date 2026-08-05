@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '291';
+var BUILD = '292';
 (function() {
   var vEl = document.getElementById('sb-versao');
   if (vEl) vEl.textContent = 'v' + BUILD;
@@ -7313,7 +7313,7 @@ function renderPainelClientes() {
   var wrap = document.getElementById('painel-clientes-wrap');
   if (!wrap) return;
   wrap.innerHTML = '<div style="text-align:center;padding:40px;color:var(--t3)">Carregando clientes...</div>';
-  db.collection('clientes').get().then(function(snap) {
+  db.collection('clientes').get({source:'server'}).then(function(snap) {
     _clientesCache = snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
     var ordem = ['fluxocerto','economico','bardocachorro'];
     _clientesCache.sort(function(a,b){
@@ -7390,9 +7390,9 @@ function _renderClientesLista() {
         '<button class="btn btn-sm" style="background:#1a5c9c;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="gerarTokenCliente(\''+safeId+'\')">🔑 Token</button>' +
         '<button class="btn btn-sm" style="color:var(--t2);border:1.5px solid var(--gray2);padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;background:#fff" onclick="verTokensCliente(\''+safeId+'\')">📋 Tokens</button>' +
         '<button class="btn btn-sm" id="btn-deploy-'+safeId+'" style="background:#2d6a2d;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="deployCliente(\''+safeId+'\')">🚀 Deploy</button>' +
-        (inativo
+        (c.id === 'fluxocerto' ? '' : (inativo
           ? '<button class="btn btn-sm" style="background:#1a5c34;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="toggleAtivoCliente(\''+safeId+'\',true)">✅ Reativar</button>'
-          : '<button class="btn btn-sm" style="background:#fff;color:#c0392b;border:1.5px solid #f5c6c0;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="toggleAtivoCliente(\''+safeId+'\',false)">🚫 Desativar</button>') +
+          : '<button class="btn btn-sm" style="background:#fff;color:#c0392b;border:1.5px solid #f5c6c0;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="toggleAtivoCliente(\''+safeId+'\',false)">🚫 Desativar</button>')) +
       '</div>' +
     '</div>';
   }).join('');
@@ -7442,7 +7442,7 @@ function _atualizarVersaoClientes() {
     .then(function(r){ return r.json(); })
     .catch(function(){ return {build: BUILD}; });
 
-  db.collection('config').doc('repos').get().then(function(rDoc) {
+  db.collection('config').doc('repos').get({source:'server'}).then(function(rDoc) {
     var repos = rDoc.exists ? rDoc.data() : {};
     basePromise.then(function(baseData) {
       var baseBuild = baseData.build;
@@ -7860,11 +7860,11 @@ function deployTodosClientes() {
 function deployCliente(clienteId, silencioso, callback) {
   var btn = document.getElementById('btn-deploy-'+clienteId);
   if (btn) { btn.textContent = '⏳ Enviando...'; btn.disabled = true; }
-  db.collection('config').doc('superadmin').get().then(function(doc) {
+  db.collection('config').doc('superadmin').get({source:'server'}).then(function(doc) {
     var cfg = doc.data();
     var token = cfg.githubToken;
     var org = cfg.githubOrg || 'fc360oficial';
-    db.collection('config').doc('repos').get().then(function(rDoc) {
+    db.collection('config').doc('repos').get({source:'server'}).then(function(rDoc) {
       var repos = rDoc.data();
       var repoName = repos[clienteId];
       if (!repoName) {
