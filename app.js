@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '294';
+var BUILD = '295';
 (function() {
   var vEl = document.getElementById('sb-versao');
   if (vEl) vEl.textContent = 'v' + BUILD;
@@ -735,7 +735,9 @@ function iniciarResultadosRealtime() {
   if (_resultadosUnsub) _resultadosUnsub();
   _firstResultSnapshot = true;
   _resultadosUnsub = db.collection('resultados').onSnapshot(function(snap) {
-    var list = snap.docs.map(function(d){ return d.data(); });
+    var myClient = (S.currentUser && S.currentUser.clienteId) || '';
+    var list = snap.docs.map(function(d){ return d.data(); })
+      .filter(function(r){ return (r.clienteId || 'economico') === myClient; });
     list.sort(function(a,b){ return (a.dataHora||'') < (b.dataHora||'') ? -1 : 1; });
     S.resultadosCache = list;
     try {
@@ -1210,7 +1212,9 @@ function finalizarLogin(found) {
   // Superadmin não pertence a nenhum cliente — o roteamento dele já é 100% por
   // role (vai direto pro painel de clientes, ver S.role==='superadmin' abaixo),
   // então fica isento da checagem de deploy pra poder gerenciar clientes de qualquer URL.
-  if (found.perfil !== 'superadmin' && userClient !== deployClient) {
+  // Sessão de impersonação (entrarComoCliente) também é isenta: é o superadmin
+  // operando de propósito como outro cliente, não um vazamento entre contas.
+  if (found.perfil !== 'superadmin' && !found._impersonadoPorSuperadmin && userClient !== deployClient) {
     try { sessionStorage.removeItem('eco_session'); } catch(e) {}
     firebase.auth().signOut().catch(function(){});
     var errEl = document.getElementById('lErr');
@@ -7312,14 +7316,18 @@ function toggleAtivoCliente(id, ativar) {
 // ── Superadmin: entrar operacionalmente como um cliente ──────────────────────
 var _superadminOriginal = null;
 
+var IMPERSON_KEY = 'eco_superadmin_original';
+
 function entrarComoCliente(id) {
   var c = _clientesCache.find(function(x){ return x.id === id; });
   if (!c) return;
-  _superadminOriginal = {
+  var original = {
     fc360ClientId: window.FC360_CLIENT_ID,
     currentUser: S.currentUser,
     role: S.role
   };
+  _superadminOriginal = original;
+  try { sessionStorage.setItem(IMPERSON_KEY, JSON.stringify(original)); } catch(e) {}
   window.FC360_CLIENT_ID = id;
   var impersonado = {
     id: 'imperson_' + id,
@@ -7327,22 +7335,26 @@ function entrarComoCliente(id) {
     email: (S.currentUser && S.currentUser.email) || '',
     perfil: 'admin',
     clienteId: id,
-    loja: ''
+    loja: '',
+    _impersonadoPorSuperadmin: true,
+    _clienteNome: c.nome || id
   };
   S.usersCache = null; S.resultadosCache = null; S.customCLsCache = null;
   _planosCache = null; S.clienteConfig = null; S.checkState = {};
   finalizarLogin(impersonado);
-  // finalizarLogin sobrescreve eco_session com o usuário impersonado — restaura
-  // pra sessão real do superadmin, assim um F5 sempre volta pro painel em vez
-  // de travar (o deploy real continua sendo o do superadmin, não o do cliente).
-  try { sessionStorage.setItem('eco_session', JSON.stringify(_superadminOriginal.currentUser)); } catch(e) {}
+  // Sessão persiste em eco_session (via finalizarLogin) de propósito — um F5
+  // continua operando como o cliente até clicar em "Voltar ao Painel".
   _mostrarFaixaImpersonar(c.nome || id);
 }
 
 function sairImpersonar() {
-  if (!_superadminOriginal) return;
   var original = _superadminOriginal;
+  if (!original) {
+    try { original = JSON.parse(sessionStorage.getItem(IMPERSON_KEY) || 'null'); } catch(e) { original = null; }
+  }
+  if (!original) return;
   _superadminOriginal = null;
+  try { sessionStorage.removeItem(IMPERSON_KEY); } catch(e) {}
   window.FC360_CLIENT_ID = original.fc360ClientId;
   S.usersCache = null; S.resultadosCache = null; S.customCLsCache = null;
   _planosCache = null; S.clienteConfig = null; S.checkState = {};
@@ -7357,11 +7369,11 @@ function _mostrarFaixaImpersonar(nomeCliente) {
   if (old) old.remove();
   var faixa = document.createElement('div');
   faixa.id = 'impersonar-faixa';
-  faixa.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;background:#1a1a1a;color:#fff;padding:9px 16px;display:flex;align-items:center;justify-content:center;gap:14px;font-size:13px;font-weight:600;font-family:\'Plus Jakarta Sans\',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.2)';
-  faixa.innerHTML = '🔧 Você está operando como <strong>'+nomeCliente+'</strong> (via Superadmin)'
-    + '<button onclick="sairImpersonar()" style="padding:5px 14px;background:#f1c40f;color:#1a1a1a;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-family:inherit">← Voltar ao Painel</button>';
+  faixa.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;background:#1a1a1a;color:#fff;padding:8px 12px;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px 14px;font-size:12.5px;font-weight:600;font-family:\'Plus Jakarta Sans\',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.2);text-align:center';
+  faixa.innerHTML = '<span>🔧 Operando como <strong>'+nomeCliente+'</strong> (via Superadmin)</span>'
+    + '<button onclick="sairImpersonar()" style="padding:5px 14px;background:#f1c40f;color:#1a1a1a;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0">← Voltar ao Painel</button>';
   document.body.appendChild(faixa);
-  document.body.style.paddingTop = '40px';
+  document.body.style.paddingTop = faixa.offsetHeight + 'px';
 }
 
 function renderPainelClientes() {
@@ -12910,15 +12922,29 @@ window.addEventListener('beforeunload', function() {
     if (saved) {
       var user = JSON.parse(saved);
       if (user && user.id && user.perfil) {
+        var _restaurar = function() {
+          // Sessão de impersonação (entrarComoCliente): o deploy real continua
+          // sendo o do superadmin, então window.FC360_CLIENT_ID precisa ser
+          // ajustado pro cliente impersonado ANTES de finalizarLogin, senão
+          // carregarClienteConfig() carrega o cliente errado.
+          if (user._impersonadoPorSuperadmin) window.FC360_CLIENT_ID = user.clienteId;
+          finalizarLogin(user);
+          if (user._impersonadoPorSuperadmin) {
+            try {
+              var orig = JSON.parse(sessionStorage.getItem(IMPERSON_KEY) || 'null');
+              if (orig) { _superadminOriginal = orig; _mostrarFaixaImpersonar(user._clienteNome || user.clienteId); }
+            } catch(e) {}
+          }
+        };
         // A validação de clienteId x deploy atual roda dentro de finalizarLogin,
         // que é chamada tanto aqui (restore) quanto no login ativo.
         if (firebase.auth().currentUser) {
-          finalizarLogin(user);
+          _restaurar();
         } else {
           var _unsub = firebase.auth().onAuthStateChanged(function(fbUser) {
             _unsub();
             if (fbUser) {
-              finalizarLogin(user);
+              _restaurar();
             }
             // fbUser null = sessao Firebase expirou; tela de login ja aparece por padrao
           });
