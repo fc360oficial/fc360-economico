@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '295';
+var BUILD = '296';
 (function() {
   var vEl = document.getElementById('sb-versao');
   if (vEl) vEl.textContent = 'v' + BUILD;
@@ -7369,8 +7369,8 @@ function _mostrarFaixaImpersonar(nomeCliente) {
   if (old) old.remove();
   var faixa = document.createElement('div');
   faixa.id = 'impersonar-faixa';
-  faixa.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;background:#1a1a1a;color:#fff;padding:8px 12px;display:flex;flex-wrap:wrap;align-items:center;justify-content:center;gap:6px 14px;font-size:12.5px;font-weight:600;font-family:\'Plus Jakarta Sans\',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.2);text-align:center';
-  faixa.innerHTML = '<span>🔧 Operando como <strong>'+nomeCliente+'</strong> (via Superadmin)</span>'
+  faixa.style.cssText = 'position:fixed;top:0;left:0;right:0;width:100%;box-sizing:border-box;z-index:10000;background:#1a1a1a;color:#fff;padding:8px 12px;display:flex;flex-direction:column;align-items:center;gap:6px;font-size:12.5px;font-weight:600;font-family:\'Plus Jakarta Sans\',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.2);text-align:center';
+  faixa.innerHTML = '<span style="max-width:100%;word-break:break-word">🔧 Operando como <strong>'+nomeCliente+'</strong> (via Superadmin)</span>'
     + '<button onclick="sairImpersonar()" style="padding:5px 14px;background:#f1c40f;color:#1a1a1a;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-family:inherit;flex-shrink:0">← Voltar ao Painel</button>';
   document.body.appendChild(faixa);
   document.body.style.paddingTop = faixa.offsetHeight + 'px';
