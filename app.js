@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '290';
+var BUILD = '291';
 (function() {
   var vEl = document.getElementById('sb-versao');
   if (vEl) vEl.textContent = 'v' + BUILD;
@@ -7292,6 +7292,22 @@ function avaliarProrrogacao(planoId, prorroId, aprovado) {
 // PAINEL SUPER ADMIN — Gestão de Clientes
 // ═══════════════════════════════════════════════════════════════════════════
 var _clientesCache = [];
+var _painelClientesFiltro = 'ativos';
+
+function setPainelClientesFiltro(f) {
+  _painelClientesFiltro = f;
+  _renderClientesLista();
+}
+
+function toggleAtivoCliente(id, ativar) {
+  if (!ativar && !confirm('Desativar este cliente? Ninguém vai conseguir logar até reativar. O site do GitHub Pages continua no ar, só o acesso fica bloqueado.')) return;
+  db.collection('clientes').doc(id).update({ ativo: ativar }).then(function() {
+    var c = _clientesCache.find(function(x){ return x.id === id; });
+    if (c) c.ativo = ativar;
+    _renderClientesLista();
+    showToast(ativar ? '✅ Cliente reativado!' : '🚫 Cliente desativado.');
+  }).catch(function(e){ showToast('⚠ Erro: ' + e.message); });
+}
 
 function renderPainelClientes() {
   var wrap = document.getElementById('painel-clientes-wrap');
@@ -7317,7 +7333,13 @@ function _renderClientesLista() {
   var MODS_LABEL = {checklist:'Checklist',inventario:'Inventário',planos_acao:'Planos',alertas:'Alertas',relatorios:'Relatórios',central:'Central',monitor:'Monitor',assistente_ia:'IA'};
   var PLANO_LABEL = {basico:'Básico',completo:'Completo',premium:'Premium'};
 
-  var cards = _clientesCache.map(function(c) {
+  var ativosCount = _clientesCache.filter(function(c){ return c.ativo !== false; }).length;
+  var desativadosCount = _clientesCache.length - ativosCount;
+  var clientesFiltrados = _clientesCache.filter(function(c){
+    return _painelClientesFiltro === 'desativados' ? c.ativo === false : c.ativo !== false;
+  });
+
+  var cards = clientesFiltrados.map(function(c) {
     var venc = c.validade ? new Date(c.validade) : null;
     if (venc) venc.setHours(23,59,59,999);
     var semLic = !venc;
@@ -7368,6 +7390,9 @@ function _renderClientesLista() {
         '<button class="btn btn-sm" style="background:#1a5c9c;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="gerarTokenCliente(\''+safeId+'\')">🔑 Token</button>' +
         '<button class="btn btn-sm" style="color:var(--t2);border:1.5px solid var(--gray2);padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;background:#fff" onclick="verTokensCliente(\''+safeId+'\')">📋 Tokens</button>' +
         '<button class="btn btn-sm" id="btn-deploy-'+safeId+'" style="background:#2d6a2d;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="deployCliente(\''+safeId+'\')">🚀 Deploy</button>' +
+        (inativo
+          ? '<button class="btn btn-sm" style="background:#1a5c34;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="toggleAtivoCliente(\''+safeId+'\',true)">✅ Reativar</button>'
+          : '<button class="btn btn-sm" style="background:#fff;color:#c0392b;border:1.5px solid #f5c6c0;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="toggleAtivoCliente(\''+safeId+'\',false)">🚫 Desativar</button>') +
       '</div>' +
     '</div>';
   }).join('');
@@ -7389,13 +7414,23 @@ function _renderClientesLista() {
       '</div>' +
     '</div>';
 
+  var tabBtn = function(f, label, count) {
+    var ativo = _painelClientesFiltro === f;
+    return '<button class="btn btn-sm" style="padding:6px 14px;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;font-family:inherit;'
+      + (ativo ? 'background:#1a1a1a;color:#fff;border:none' : 'background:#fff;color:var(--t2);border:1.5px solid var(--gray2)')
+      + '" onclick="setPainelClientesFiltro(\''+f+'\')">'+label+' ('+count+')</button>';
+  };
+
   wrap.innerHTML =
     '<div style="display:flex;justify-content:flex-end;margin-bottom:16px">' +
       '<button class="btn btn-p btn-sm" onclick="abrirNovoCliente()">+ Novo Cliente</button>' +
     '</div>' +
     baseCard +
-    '<div style="font-size:10px;font-weight:700;letter-spacing:2px;color:var(--t3);margin-bottom:12px">CLIENTES ('+_clientesCache.length+')</div>' +
-    (cards || '<div style="text-align:center;padding:40px;color:var(--t3)">Nenhum cliente cadastrado.</div>');
+    '<div style="display:flex;gap:8px;margin-bottom:16px">' +
+      tabBtn('ativos', 'Ativos', ativosCount) +
+      tabBtn('desativados', 'Desativados', desativadosCount) +
+    '</div>' +
+    (cards || '<div style="text-align:center;padding:40px;color:var(--t3)">'+(_painelClientesFiltro==='desativados'?'Nenhum cliente desativado.':'Nenhum cliente cadastrado.')+'</div>');
 
   _atualizarVersaoClientes();
 }
