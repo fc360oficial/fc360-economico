@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '292';
+var BUILD = '294';
 (function() {
   var vEl = document.getElementById('sb-versao');
   if (vEl) vEl.textContent = 'v' + BUILD;
@@ -7309,6 +7309,61 @@ function toggleAtivoCliente(id, ativar) {
   }).catch(function(e){ showToast('⚠ Erro: ' + e.message); });
 }
 
+// ── Superadmin: entrar operacionalmente como um cliente ──────────────────────
+var _superadminOriginal = null;
+
+function entrarComoCliente(id) {
+  var c = _clientesCache.find(function(x){ return x.id === id; });
+  if (!c) return;
+  _superadminOriginal = {
+    fc360ClientId: window.FC360_CLIENT_ID,
+    currentUser: S.currentUser,
+    role: S.role
+  };
+  window.FC360_CLIENT_ID = id;
+  var impersonado = {
+    id: 'imperson_' + id,
+    nome: 'Tiago (via Superadmin)',
+    email: (S.currentUser && S.currentUser.email) || '',
+    perfil: 'admin',
+    clienteId: id,
+    loja: ''
+  };
+  S.usersCache = null; S.resultadosCache = null; S.customCLsCache = null;
+  _planosCache = null; S.clienteConfig = null; S.checkState = {};
+  finalizarLogin(impersonado);
+  // finalizarLogin sobrescreve eco_session com o usuário impersonado — restaura
+  // pra sessão real do superadmin, assim um F5 sempre volta pro painel em vez
+  // de travar (o deploy real continua sendo o do superadmin, não o do cliente).
+  try { sessionStorage.setItem('eco_session', JSON.stringify(_superadminOriginal.currentUser)); } catch(e) {}
+  _mostrarFaixaImpersonar(c.nome || id);
+}
+
+function sairImpersonar() {
+  if (!_superadminOriginal) return;
+  var original = _superadminOriginal;
+  _superadminOriginal = null;
+  window.FC360_CLIENT_ID = original.fc360ClientId;
+  S.usersCache = null; S.resultadosCache = null; S.customCLsCache = null;
+  _planosCache = null; S.clienteConfig = null; S.checkState = {};
+  var faixa = document.getElementById('impersonar-faixa');
+  if (faixa) faixa.remove();
+  document.body.style.paddingTop = '';
+  finalizarLogin(original.currentUser);
+}
+
+function _mostrarFaixaImpersonar(nomeCliente) {
+  var old = document.getElementById('impersonar-faixa');
+  if (old) old.remove();
+  var faixa = document.createElement('div');
+  faixa.id = 'impersonar-faixa';
+  faixa.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;background:#1a1a1a;color:#fff;padding:9px 16px;display:flex;align-items:center;justify-content:center;gap:14px;font-size:13px;font-weight:600;font-family:\'Plus Jakarta Sans\',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.2)';
+  faixa.innerHTML = '🔧 Você está operando como <strong>'+nomeCliente+'</strong> (via Superadmin)'
+    + '<button onclick="sairImpersonar()" style="padding:5px 14px;background:#f1c40f;color:#1a1a1a;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-family:inherit">← Voltar ao Painel</button>';
+  document.body.appendChild(faixa);
+  document.body.style.paddingTop = '40px';
+}
+
 function renderPainelClientes() {
   var wrap = document.getElementById('painel-clientes-wrap');
   if (!wrap) return;
@@ -7364,21 +7419,22 @@ function _renderClientesLista() {
         '</div>' +
         '<span id="verstatus-'+c.id+'" style="font-size:10px;font-weight:700;padding:4px 10px;border-radius:20px;background:#f0f0f0;color:#999;white-space:nowrap;letter-spacing:.5px">⏳ verificando</span>' +
       '</div>' +
-      // ── Linha de métricas
-      '<div style="padding:10px 18px;display:flex;gap:0;border-bottom:1px solid var(--gray2);background:var(--gray)">' +
-        '<div style="flex:1;padding-right:14px;border-right:1px solid var(--gray2)">' +
+      // ── Linha de métricas (empilha sozinha em telas estreitas — sem media query,
+      // só flex-wrap com largura mínima por bloco)
+      '<div style="padding:10px 18px;display:flex;flex-wrap:wrap;gap:12px;border-bottom:1px solid var(--gray2);background:var(--gray)">' +
+        '<div style="flex:1 1 130px;min-width:130px">' +
           '<div style="font-size:9px;font-weight:700;letter-spacing:1.5px;color:var(--t3);margin-bottom:4px">LICENÇA</div>' +
-          '<span style="font-size:12px;font-weight:700;color:'+licCor+';background:'+licBg+';padding:3px 8px;border-radius:6px">'+licTxt+'</span>' +
+          '<span style="font-size:12px;font-weight:700;color:'+licCor+';background:'+licBg+';padding:3px 8px;border-radius:6px;white-space:nowrap">'+licTxt+'</span>' +
         '</div>' +
-        '<div style="flex:1;padding-left:14px;padding-right:14px;border-right:1px solid var(--gray2)">' +
+        '<div style="flex:1 1 90px;min-width:90px">' +
           '<div style="font-size:9px;font-weight:700;letter-spacing:1.5px;color:var(--t3);margin-bottom:4px">VERSÃO</div>' +
           '<span id="ver-'+c.id+'" style="font-family:monospace;font-size:13px;font-weight:700;color:#999">⏳</span>' +
         '</div>' +
-        '<div style="flex:2;padding-left:14px">' +
+        '<div style="flex:2 1 200px;min-width:200px">' +
           '<div style="font-size:9px;font-weight:700;letter-spacing:1.5px;color:var(--t3);margin-bottom:4px">URL DO CLIENTE</div>' +
-          '<div style="display:flex;align-items:center;gap:6px">' +
-            '<span id="url-'+c.id+'" style="font-size:11px;color:var(--t2);font-family:monospace">—</span>' +
-            '<button onclick="var u=document.getElementById(\'url-'+safeId+'\').textContent;navigator.clipboard.writeText(u).then(function(){showToast(\'✅ URL copiada!\');})" style="background:none;border:1px solid var(--gray2);border-radius:5px;padding:2px 6px;font-size:10px;color:var(--t2);cursor:pointer">copiar</button>' +
+          '<div style="display:flex;align-items:center;flex-wrap:wrap;gap:6px">' +
+            '<span id="url-'+c.id+'" style="font-size:11px;color:var(--t2);font-family:monospace;word-break:break-all">—</span>' +
+            '<button onclick="var u=document.getElementById(\'url-'+safeId+'\').textContent;navigator.clipboard.writeText(u).then(function(){showToast(\'✅ URL copiada!\');})" style="background:none;border:1px solid var(--gray2);border-radius:5px;padding:2px 6px;font-size:10px;color:var(--t2);cursor:pointer;flex-shrink:0">copiar</button>' +
           '</div>' +
         '</div>' +
       '</div>' +
@@ -7387,6 +7443,7 @@ function _renderClientesLista() {
       // ── Ações
       '<div style="padding:10px 18px;display:flex;gap:8px;flex-wrap:wrap">' +
         '<button class="btn btn-p btn-sm" onclick="abrirEditarCliente(\''+safeId+'\')">✏️ Editar</button>' +
+        '<button class="btn btn-sm" style="background:#1a1a1a;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="entrarComoCliente(\''+safeId+'\')">🚪 Entrar como</button>' +
         '<button class="btn btn-sm" style="background:#1a5c9c;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="gerarTokenCliente(\''+safeId+'\')">🔑 Token</button>' +
         '<button class="btn btn-sm" style="color:var(--t2);border:1.5px solid var(--gray2);padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;background:#fff" onclick="verTokensCliente(\''+safeId+'\')">📋 Tokens</button>' +
         '<button class="btn btn-sm" id="btn-deploy-'+safeId+'" style="background:#2d6a2d;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="deployCliente(\''+safeId+'\')">🚀 Deploy</button>' +
