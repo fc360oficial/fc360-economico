@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '302';
+var BUILD = '303';
 (function() {
   var vEl = document.getElementById('sb-versao');
   if (vEl) vEl.textContent = 'v' + BUILD;
@@ -7396,7 +7396,7 @@ function _renderClientesLista() {
   var wrap = document.getElementById('painel-clientes-wrap');
   if (!wrap) return;
   var hoje = new Date(); hoje.setHours(0,0,0,0);
-  var MODS = ['checklist','inventario','planos_acao','alertas','relatorios','central','monitor','assistente_ia'];
+  var MODS = ['checklist','inventario','planos_acao','relatorios','central','monitor','assistente_ia'];
   var MODS_LABEL = {checklist:'Checklist',inventario:'Inventário',planos_acao:'Planos',alertas:'Alertas',relatorios:'Relatórios',central:'Central',monitor:'Monitor',assistente_ia:'IA'};
   var PLANO_LABEL = {basico:'Básico',completo:'Completo',premium:'Premium'};
 
@@ -7573,7 +7573,7 @@ function _atualizarVersaoClientes() {
 
 function abrirEditarCliente(clienteId) {
   var c = _clientesCache.find(function(x){ return x.id===clienteId; }) || {};
-  var MODS = ['checklist','inventario','planos_acao','alertas','relatorios','central','assistente_ia','monitor'];
+  var MODS = ['checklist','inventario','planos_acao','relatorios','central','assistente_ia','monitor'];
   var MODS_LABEL = {checklist:'Checklist',inventario:'Inventário',planos_acao:'Planos de Ação',alertas:'Alertas',relatorios:'Relatórios',central:'Central de Resultados',assistente_ia:'Assistente IA',monitor:'Monitor'};
   var modHtml = MODS.map(function(m){
     var on = !c.modulos || c.modulos[m] !== false;
@@ -7610,7 +7610,7 @@ function fecharEditarCliente() {
 }
 
 function salvarEdicaoCliente(clienteId) {
-  var MODS = ['checklist','inventario','planos_acao','alertas','perdas','relatorios','central','assistente_ia','monitor'];
+  var MODS = ['checklist','inventario','planos_acao','perdas','relatorios','central','assistente_ia','monitor'];
   var modulos = {};
   MODS.forEach(function(m){ modulos[m] = !!(document.getElementById('ec-mod-'+m)||{}).checked; });
   var dados = {
@@ -7630,7 +7630,7 @@ function salvarEdicaoCliente(clienteId) {
 }
 
 function abrirNovoCliente() {
-  var MODS = ['checklist','inventario','planos_acao','alertas','relatorios','central','assistente_ia','monitor'];
+  var MODS = ['checklist','inventario','planos_acao','relatorios','central','assistente_ia','monitor'];
   var MODS_LABEL = {checklist:'Checklist',inventario:'Inventário',planos_acao:'Planos de Ação',alertas:'Alertas',relatorios:'Relatórios',central:'Central de Resultados',assistente_ia:'Assistente IA',monitor:'Monitor'};
   var modHtml = MODS.map(function(m){
     return '<label onchange="var i=this.querySelector(\'input\');this.style.background=i.checked?\'rgba(34,197,94,.1)\':\'\';this.style.color=i.checked?\'#15803d\':\'\';" style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:7px 10px;font-size:13px;font-weight:600;background:rgba(34,197,94,.1);color:#15803d;border-radius:8px;">'+
@@ -7661,7 +7661,7 @@ function fecharNovoCliente() {
 }
 
 function criarNovoCliente() {
-  var MODS = ['checklist','inventario','planos_acao','alertas','perdas','relatorios','central','assistente_ia','monitor'];
+  var MODS = ['checklist','inventario','planos_acao','perdas','relatorios','central','assistente_ia','monitor'];
   var nome = (document.getElementById('nc-nome')||{}).value||'';
   var id = ((document.getElementById('nc-id')||{}).value||'').toLowerCase().replace(/[^a-z0-9]/g,'');
   var errEl = document.getElementById('nc-err');
