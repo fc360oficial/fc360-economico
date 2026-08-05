@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '299';
+var BUILD = '301';
 (function() {
   var vEl = document.getElementById('sb-versao');
   if (vEl) vEl.textContent = 'v' + BUILD;
@@ -7913,11 +7913,13 @@ function _pollWorkflow(org, repoName, token, since, btn, clienteId, silencioso, 
 
 function deployTodosClientes() {
   if (_clientesCache.length === 0) { showToast('Nenhum cliente carregado.'); return; }
-  var nomes = _clientesCache.map(function(c){ return c.nome||c.id; }).join(', ');
-  if (!confirm('Publicar atualização para TODOS os clientes?\n\n'+nomes+'\n\nIsso pode demorar alguns minutos.')) return;
-  var total = _clientesCache.length;
+  var clientesAtivos = _clientesCache.filter(function(c){ return c.ativo !== false; });
+  if (clientesAtivos.length === 0) { showToast('Nenhum cliente ativo pra publicar.'); return; }
+  var nomes = clientesAtivos.map(function(c){ return c.nome||c.id; }).join(', ');
+  if (!confirm('Publicar atualização para TODOS os clientes ativos?\n\n'+nomes+'\n\nIsso pode demorar alguns minutos.')) return;
+  var total = clientesAtivos.length;
   var feitos = 0;
-  _clientesCache.forEach(function(c) { deployCliente(c.id, true, function(ok){
+  clientesAtivos.forEach(function(c) { deployCliente(c.id, true, function(ok){
     feitos++;
     if (feitos === total) {
       showToast('🚀 Deploy enviado para todos os '+total+' clientes!');
