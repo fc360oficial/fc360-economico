@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '292';
+var BUILD = '293';
 (function() {
   var vEl = document.getElementById('sb-versao');
   if (vEl) vEl.textContent = 'v' + BUILD;
@@ -7309,6 +7309,61 @@ function toggleAtivoCliente(id, ativar) {
   }).catch(function(e){ showToast('⚠ Erro: ' + e.message); });
 }
 
+// ── Superadmin: entrar operacionalmente como um cliente ──────────────────────
+var _superadminOriginal = null;
+
+function entrarComoCliente(id) {
+  var c = _clientesCache.find(function(x){ return x.id === id; });
+  if (!c) return;
+  _superadminOriginal = {
+    fc360ClientId: window.FC360_CLIENT_ID,
+    currentUser: S.currentUser,
+    role: S.role
+  };
+  window.FC360_CLIENT_ID = id;
+  var impersonado = {
+    id: 'imperson_' + id,
+    nome: 'Tiago (via Superadmin)',
+    email: (S.currentUser && S.currentUser.email) || '',
+    perfil: 'admin',
+    clienteId: id,
+    loja: ''
+  };
+  S.usersCache = null; S.resultadosCache = null; S.customCLsCache = null;
+  _planosCache = null; S.clienteConfig = null; S.checkState = {};
+  finalizarLogin(impersonado);
+  // finalizarLogin sobrescreve eco_session com o usuário impersonado — restaura
+  // pra sessão real do superadmin, assim um F5 sempre volta pro painel em vez
+  // de travar (o deploy real continua sendo o do superadmin, não o do cliente).
+  try { sessionStorage.setItem('eco_session', JSON.stringify(_superadminOriginal.currentUser)); } catch(e) {}
+  _mostrarFaixaImpersonar(c.nome || id);
+}
+
+function sairImpersonar() {
+  if (!_superadminOriginal) return;
+  var original = _superadminOriginal;
+  _superadminOriginal = null;
+  window.FC360_CLIENT_ID = original.fc360ClientId;
+  S.usersCache = null; S.resultadosCache = null; S.customCLsCache = null;
+  _planosCache = null; S.clienteConfig = null; S.checkState = {};
+  var faixa = document.getElementById('impersonar-faixa');
+  if (faixa) faixa.remove();
+  document.body.style.paddingTop = '';
+  finalizarLogin(original.currentUser);
+}
+
+function _mostrarFaixaImpersonar(nomeCliente) {
+  var old = document.getElementById('impersonar-faixa');
+  if (old) old.remove();
+  var faixa = document.createElement('div');
+  faixa.id = 'impersonar-faixa';
+  faixa.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:10000;background:#1a1a1a;color:#fff;padding:9px 16px;display:flex;align-items:center;justify-content:center;gap:14px;font-size:13px;font-weight:600;font-family:\'Plus Jakarta Sans\',sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.2)';
+  faixa.innerHTML = '🔧 Você está operando como <strong>'+nomeCliente+'</strong> (via Superadmin)'
+    + '<button onclick="sairImpersonar()" style="padding:5px 14px;background:#f1c40f;color:#1a1a1a;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-family:inherit">← Voltar ao Painel</button>';
+  document.body.appendChild(faixa);
+  document.body.style.paddingTop = '40px';
+}
+
 function renderPainelClientes() {
   var wrap = document.getElementById('painel-clientes-wrap');
   if (!wrap) return;
@@ -7387,6 +7442,7 @@ function _renderClientesLista() {
       // ── Ações
       '<div style="padding:10px 18px;display:flex;gap:8px;flex-wrap:wrap">' +
         '<button class="btn btn-p btn-sm" onclick="abrirEditarCliente(\''+safeId+'\')">✏️ Editar</button>' +
+        '<button class="btn btn-sm" style="background:#1a1a1a;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="entrarComoCliente(\''+safeId+'\')">🚪 Entrar como</button>' +
         '<button class="btn btn-sm" style="background:#1a5c9c;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="gerarTokenCliente(\''+safeId+'\')">🔑 Token</button>' +
         '<button class="btn btn-sm" style="color:var(--t2);border:1.5px solid var(--gray2);padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit;background:#fff" onclick="verTokensCliente(\''+safeId+'\')">📋 Tokens</button>' +
         '<button class="btn btn-sm" id="btn-deploy-'+safeId+'" style="background:#2d6a2d;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="deployCliente(\''+safeId+'\')">🚀 Deploy</button>' +
