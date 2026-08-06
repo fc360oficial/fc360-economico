@@ -962,10 +962,18 @@ function _moduloAtivo(nome) {
 // misturados num show() só — aqui precisamos separar os dois para poder
 // distinguir "oculto" de "cadeado").
 var CAPA_MODULOS = [
+  { id:'dashboard', label:'Dashboard', desenvolvido:true, moduloChave:null,
+    roleOk: function(){ return S.role==='admin' || S.role==='supervisor'; },
+    page: function(){ return 'dashboard'; },
+    icone:'<rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>' },
   { id:'checklist', label:'Checklist', desenvolvido:true, moduloChave:'checklist',
     roleOk: function(){ return S.role !== 'coletor'; },
     page: function(){ return 'checklist'; },
     icone:'<polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>' },
+  { id:'plano', label:'Planos de Ação', desenvolvido:true, moduloChave:'planos_acao',
+    roleOk: function(){ return S.role==='admin' || S.role==='supervisor' || S.role==='gerencia'; },
+    page: function(){ return 'plano'; },
+    icone:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>' },
   { id:'inventario', label:'Inventário', desenvolvido:true, moduloChave:'inventario',
     roleOk: function(){
       if (S.role === 'admin') return true;
@@ -974,10 +982,6 @@ var CAPA_MODULOS = [
     },
     page: function(){ return S.role === 'admin' ? 'inv' : 'inv-coleta'; },
     icone:'<path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/>' },
-  { id:'plano', label:'Planos de Ação', desenvolvido:true, moduloChave:'planos_acao',
-    roleOk: function(){ return S.role==='admin' || S.role==='supervisor' || S.role==='gerencia'; },
-    page: function(){ return 'plano'; },
-    icone:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>' },
   { id:'promotores', label:'Promotores', desenvolvido:false,
     icone:'<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>' },
   { id:'pesquisa', label:'Pesquisa Concorrentes', desenvolvido:false,
@@ -1616,6 +1620,8 @@ function setupRole() {
   var _tbMZ = document.getElementById('topbar-menu-zerar');
   if (_tbUN) _tbUN.textContent = _uNome;
   if (_tbUI) _tbUI.textContent = _uIni||'?';
+  var _sbUI = document.getElementById('sb-user-ini');
+  if (_sbUI) _sbUI.textContent = _uIni||'?';
   if (_tbMR) _tbMR.textContent = roleNames[r]||r;
   if (_tbMN) _tbMN.textContent = _uNome;
   if (_tbMZ) _tbMZ.style.display = (r==='admin'||r==='superadmin') ? 'flex' : 'none';
@@ -1683,12 +1689,24 @@ function setupRole() {
 function toggleUserMenu() {
   var m = document.getElementById('topbar-user-menu');
   if (!m) return;
+  // No mobile o menu vira uma folha fixa (ver CSS), mas .topbar tem
+  // position:sticky — isso cria um contexto de empilhamento próprio que
+  // prende qualquer z-index do menu abaixo da sidebar (.sb, z-index:500),
+  // mesmo com !important. Reparentar pra <body> escapa desse contexto.
+  // No desktop o menu fica onde está (position:absolute ancorado no topbar).
+  if (window.innerWidth <= 768 && m.parentElement !== document.body) {
+    document.body.appendChild(m);
+  }
   m.style.display = (m.style.display === 'none' || m.style.display === '') ? 'block' : 'none';
 }
 document.addEventListener('click', function(e) {
   var wrap = document.getElementById('topbar-user-wrap');
+  var footer = document.getElementById('sb-user-footer');
   var m = document.getElementById('topbar-user-menu');
-  if (m && wrap && !wrap.contains(e.target)) m.style.display = 'none';
+  if (!m) return;
+  var dentroDoGatilho = (wrap && wrap.contains(e.target)) || (footer && footer.contains(e.target));
+  var dentroDoMenu = m.contains(e.target);
+  if (!dentroDoGatilho && !dentroDoMenu) m.style.display = 'none';
 });
 
 function toggleSidebar() {
@@ -1761,7 +1779,9 @@ function nav(page, el) {
   var panel = document.getElementById('panel-'+page);
   if (panel) panel.classList.add('active');
   if (el) el.classList.add('active');
-  document.getElementById('pageTitle').textContent = PAGE_TITLES[page]||page;
+  document.getElementById('pageTitle').textContent = page==='capa'
+    ? ((S.clienteConfig && S.clienteConfig.nome) || 'Fluxo Certo 360')
+    : (PAGE_TITLES[page]||page);
   if (page==='capa') {
     renderCapa();
   }
