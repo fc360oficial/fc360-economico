@@ -46,6 +46,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#eef1f5;color:var(--t
 .sb-item svg{width:15px;height:15px;flex-shrink:0}
 .sb-item-sub{padding-left:32px;font-size:12px;color:rgba(0,0,0,.5)}
 .sb-item-sub svg{width:13px;height:13px}
+#nav-capa{display:none}
 .sb-user{padding:12px 16px;border-top:1px solid rgba(0,0,0,.12)}
 .sb-user .role{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:rgba(0,0,0,.4)}
 .sb-user .name{font-size:13px;color:#111;margin-top:2px;font-weight:700}
@@ -168,6 +169,7 @@ tbody tr:hover td{background:#fafcfa}
     overflow-y: auto;
   }
   .sb.open { left: 0; }
+  #nav-capa { display: flex; }
   .sb-user {
     padding-bottom: 80px;
   }
