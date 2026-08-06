@@ -165,13 +165,11 @@ tbody tr:hover td{background:#fafcfa}
   /* App layout */
   #app { flex-direction: column; height: auto; min-height: 100vh; overflow: visible; }
 
-  /* Sidebar — hidden by default on mobile */
-  .sb {
-    position: fixed; top: 0; left: -100%; width: 80%; max-width: 280px;
-    height: 100%; height: 100dvh; z-index: 500; transition: left .25s ease;
-    overflow-y: auto;
-  }
-  .sb.open { left: 0; }
+  /* Sidebar — removida no mobile (redundante com a capa); navegação vira
+     seta-voltar + capa + engrenagem de conta no topbar (ver abaixo) */
+  .sb { display: none !important; }
+  #sb-overlay { display: none !important; }
+  #btn-config-mobile { display: flex !important; align-items: center; justify-content: center; }
   #nav-capa { display: flex; }
   .sb-user {
     display: block;
