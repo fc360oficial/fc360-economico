@@ -1049,8 +1049,11 @@ function renderCapa() {
 }
 
 function carregarClienteConfig(cb) {
-  // client.js do deploy tem prioridade; fallback para clienteId do usuário
-  var clienteId = (window.FC360_CLIENT_ID && window.FC360_CLIENT_ID.trim())
+  // client.js do deploy tem prioridade; fallback para clienteId do usuário.
+  // No deploy universal (FC360_CLIENT_ID === 'universal', usado pelo app único
+  // da Play Store) não há tenant fixo — o clienteId vem sempre do usuário logado.
+  var deployId = (window.FC360_CLIENT_ID && window.FC360_CLIENT_ID.trim()) || '';
+  var clienteId = (deployId && deployId !== 'universal' ? deployId : '')
     || (S.currentUser && S.currentUser.clienteId)
     || '';
   if (!clienteId) { S.clienteConfig = null; if (cb) cb(); return; }
@@ -1303,12 +1306,18 @@ function finalizarLogin(found) {
   // restauração de sessão (eco_session), então a validação fica aqui, não duplicada nos dois.
   var deployClient = (window.FC360_CLIENT_ID || '').trim();
   var userClient = found.clienteId || '';
+  // Deploy universal (app único da Play Store, FC360_CLIENT_ID='universal'):
+  // não existe tenant fixo pra comparar — é o login que DEFINE o tenant da
+  // sessão (carregarClienteConfig() já trata 'universal' como ausente e usa
+  // userClient). Nos deploys por cliente (client.js normal) a checagem abaixo
+  // continua bloqueando login cruzado, sem mudança de comportamento.
+  var isDeployUniversal = deployClient === 'universal';
   // Superadmin não pertence a nenhum cliente — o roteamento dele já é 100% por
   // role (vai direto pro painel de clientes, ver S.role==='superadmin' abaixo),
   // então fica isento da checagem de deploy pra poder gerenciar clientes de qualquer URL.
   // Sessão de impersonação (entrarComoCliente) também é isenta: é o superadmin
   // operando de propósito como outro cliente, não um vazamento entre contas.
-  if (found.perfil !== 'superadmin' && !found._impersonadoPorSuperadmin && userClient !== deployClient) {
+  if (!isDeployUniversal && found.perfil !== 'superadmin' && !found._impersonadoPorSuperadmin && userClient !== deployClient) {
     try { sessionStorage.removeItem('eco_session'); } catch(e) {}
     firebase.auth().signOut().catch(function(){});
     var errEl = document.getElementById('lErr');
