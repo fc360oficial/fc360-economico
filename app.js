@@ -974,6 +974,16 @@ var CAPA_MODULOS = [
     roleOk: function(){ return S.role==='admin' || S.role==='supervisor' || S.role==='gerencia'; },
     page: function(){ return 'plano'; },
     icone:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>' },
+  { id:'central', label:'Central de Resultados', desenvolvido:true, moduloChave:'central',
+    roleOk: function(){ return S.role==='admin' || S.role==='supervisor'; },
+    page: function(){ return 'central'; },
+    icone:'<path d="M22 12h-4l-3 9L9 3l-3 9H2"/>' },
+  { id:'relatorios', label:'Relatórios', desenvolvido:true, moduloChave:null,
+    // gerência tem acesso no sidebar do site (setupRole), mas fica de fora da
+    // capa mobile por enquanto — decisão do Tiago, não é a mesma regra do site.
+    roleOk: function(){ return S.role==='admin' || S.role==='supervisor'; },
+    page: function(){ return 'relatorios'; },
+    icone:'<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>' },
   { id:'inventario', label:'Inventário', desenvolvido:true, moduloChave:'inventario',
     roleOk: function(){
       if (S.role === 'admin') return true;
@@ -1702,9 +1712,10 @@ function toggleUserMenu() {
 document.addEventListener('click', function(e) {
   var wrap = document.getElementById('topbar-user-wrap');
   var footer = document.getElementById('sb-user-footer');
+  var gear = document.getElementById('btn-config-mobile');
   var m = document.getElementById('topbar-user-menu');
   if (!m) return;
-  var dentroDoGatilho = (wrap && wrap.contains(e.target)) || (footer && footer.contains(e.target));
+  var dentroDoGatilho = (wrap && wrap.contains(e.target)) || (footer && footer.contains(e.target)) || (gear && gear.contains(e.target));
   var dentroDoMenu = m.contains(e.target);
   if (!dentroDoGatilho && !dentroDoMenu) m.style.display = 'none';
 });
@@ -1724,10 +1735,18 @@ function toggleSidebar() {
   }
 }
 
+// Seta de voltar do topbar mobile: some quando a tela atual já é a capa
+// (não faz sentido "voltar" pra onde já se está), aparece nas demais telas.
+function _atualizarBotaoVoltar() {
+  var btn = document.getElementById('btn-hamburger');
+  if (!btn) return;
+  var paginaAtual = sessionStorage.getItem('eco_last_page');
+  btn.style.display = (window.innerWidth <= 768 && paginaAtual !== 'capa') ? 'flex' : 'none';
+}
+
 function checkMobile() {
   var isMobile = window.innerWidth <= 768;
-  var btn = document.getElementById('btn-hamburger');
-  if (btn) btn.style.display = isMobile ? 'flex' : 'none';
+  _atualizarBotaoVoltar();
   // On desktop ensure sidebar is visible
   if (!isMobile) {
     var sb = document.querySelector('.sb');
@@ -1782,6 +1801,7 @@ function nav(page, el) {
   document.getElementById('pageTitle').textContent = page==='capa'
     ? ((S.clienteConfig && S.clienteConfig.nome) || 'Fluxo Certo 360')
     : (PAGE_TITLES[page]||page);
+  _atualizarBotaoVoltar();
   if (page==='capa') {
     renderCapa();
   }
