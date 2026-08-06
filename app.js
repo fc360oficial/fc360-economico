@@ -1317,12 +1317,22 @@ function finalizarLogin(found) {
   // então fica isento da checagem de deploy pra poder gerenciar clientes de qualquer URL.
   // Sessão de impersonação (entrarComoCliente) também é isenta: é o superadmin
   // operando de propósito como outro cliente, não um vazamento entre contas.
-  if (!isDeployUniversal && found.perfil !== 'superadmin' && !found._impersonadoPorSuperadmin && userClient !== deployClient) {
+  // No universal a checagem de mismatch não se aplica (não há deployClient fixo
+  // pra comparar), mas o usuário ainda precisa ter um clienteId próprio: sem
+  // isso carregarClienteConfig() resolve clienteId='' e cai no early-return que
+  // zera S.clienteConfig, o que faz _checkAssinatura() sair sem checar
+  // ativo/validade — uma sessão autenticada e sem gate de assinatura. Falha
+  // fechado (bloqueia) em vez de aberto nesse caso.
+  var semTenantProprio = isDeployUniversal && !userClient;
+  var mismatchDeployNormal = !isDeployUniversal && userClient !== deployClient;
+  if ((semTenantProprio || mismatchDeployNormal) && found.perfil !== 'superadmin' && !found._impersonadoPorSuperadmin) {
     try { sessionStorage.removeItem('eco_session'); } catch(e) {}
     firebase.auth().signOut().catch(function(){});
     var errEl = document.getElementById('lErr');
     if (errEl) {
-      errEl.textContent = 'Este usuário não pertence a este endereço. Acesse a URL correta do seu cliente.';
+      errEl.textContent = semTenantProprio
+        ? 'Este usuário não está vinculado a nenhum cliente. Contate o suporte.'
+        : 'Este usuário não pertence a este endereço. Acesse a URL correta do seu cliente.';
       errEl.style.color = 'var(--r)';
       errEl.style.display = 'block';
     }
