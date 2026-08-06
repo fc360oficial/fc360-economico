@@ -1451,6 +1451,10 @@ function finalizarLogin(found) {
       // Se o coletor recarregou na tela inv-coleta, re-renderiza agora que os dados chegaram
       var panelColeta=document.getElementById('panel-inv-coleta');
       if (panelColeta&&panelColeta.classList.contains('active')) renderColeta();
+      // Se o usuário está na capa, re-renderiza agora que S.invsCache está populado
+      // (o card de Inventário do coletor depende de invsCache para aparecer)
+      var panelCapa=document.getElementById('panel-capa');
+      if (panelCapa&&panelCapa.classList.contains('active')) renderCapa();
     });
     if (!isOpOrPrev2) {
       initDashCharts();
@@ -7293,8 +7297,10 @@ function _prazoInfo(p) {
 function _contarPendenciasNotificacao() {
   if (!_moduloAtivo('planos_acao')) return { total:0, vencidos:[], urgentes:[] };
   var uLoja = S.currentUser ? (S.currentUser.loja||'').toLowerCase() : '';
+  var myClient = (S.currentUser && S.currentUser.clienteId) || '';
   var agora = Date.now();
   var planos = getPlanos().filter(function(p) {
+    if ((p.clienteId || 'economico') !== myClient) return false;
     if (p.status === 'resolvido') return false;
     if (uLoja && (p.loja||'').toLowerCase() !== uLoja) return false;
     return true;
