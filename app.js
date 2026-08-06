@@ -1646,6 +1646,7 @@ function setupRole() {
     pedirPermissaoNotificacao();
     setTimeout(iniciarVerificacaoPeriodica, 3000);
   }
+  _atualizarBadgeNotificacoes();
 }
 
 // ── Mobile sidebar ──
@@ -1713,6 +1714,7 @@ var PAGE_TITLES = {
 };
 
 function nav(page, el) {
+  _atualizarBadgeNotificacoes();
   sessionStorage.setItem('eco_last_page', page);
   localStorage.setItem('eco_last_page', page); // fallback para PWA fechado/reaberto
   if (page !== 'inv') localStorage.removeItem('inv_detalhe_state');
@@ -7255,6 +7257,70 @@ function _prazoInfo(p) {
   var txt2 = d > 0 ? (d+'d '+(h%24)+'h restantes') : (h+'h '+m+'m restantes');
   var urgente = diffMs < 24 * 3600000;
   return { vencido:false, urgente:urgente, texto:txt2, cor: urgente ? '#d68910' : 'var(--g)' };
+}
+
+// ── Sininho de notificações (capa) ────────────────────────────────────────
+// Mesmo filtro de "precisa de atenção" já usado em renderAlertaPlanos()
+// (app.js ~7282) — mantido separado dela de propósito porque aquela função
+// escreve direto num banner de DOM específico da tela de Planos de Ação;
+// aqui precisamos só da contagem, chamável de qualquer tela.
+function _contarPendenciasNotificacao() {
+  if (!_moduloAtivo('planos_acao')) return { total:0, vencidos:[], urgentes:[] };
+  var uLoja = S.currentUser ? (S.currentUser.loja||'').toLowerCase() : '';
+  var agora = Date.now();
+  var planos = getPlanos().filter(function(p) {
+    if (p.status === 'resolvido') return false;
+    if (uLoja && (p.loja||'').toLowerCase() !== uLoja) return false;
+    return true;
+  });
+  var vencidos = planos.filter(function(p){ return p.prazoFim && new Date(p.prazoFim).getTime() < agora; });
+  var urgentes = planos.filter(function(p){
+    if (!p.prazoFim) return false;
+    var fim = new Date(p.prazoFim).getTime();
+    return fim > agora && fim < agora + 24*3600000;
+  });
+  return { total: vencidos.length + urgentes.length, vencidos: vencidos, urgentes: urgentes };
+}
+
+function _atualizarBadgeNotificacoes() {
+  var btn = document.getElementById('capa-bell');
+  var badge = document.getElementById('capa-bell-badge');
+  if (!btn || !badge) return;
+  var podeVer = S.role==='admin' || S.role==='gerencia' || S.role==='supervisor';
+  if (!podeVer || !_moduloAtivo('planos_acao')) { btn.style.display = 'none'; return; }
+  btn.style.display = 'flex';
+  var info = _contarPendenciasNotificacao();
+  if (info.total > 0) {
+    badge.textContent = info.total > 9 ? '9+' : String(info.total);
+    badge.style.display = 'flex';
+  } else {
+    badge.style.display = 'none';
+  }
+}
+
+function abrirPainelNotificacoes() {
+  var info = _contarPendenciasNotificacao();
+  var itens = info.vencidos.concat(info.urgentes);
+  var listaHtml = itens.length
+    ? itens.map(function(p) {
+        var inf = _prazoInfo(p);
+        return '<div style="padding:10px 12px;border-bottom:1px solid var(--gray2);font-size:13px">'
+          + '<strong>'+p.desc+'</strong><br>'
+          + '<span style="color:'+(inf?inf.cor:'var(--t2)')+';font-size:12px">'+(inf?inf.texto:'')+'</span>'
+          + '</div>';
+      }).join('')
+    : '<div style="padding:20px;text-align:center;color:var(--t3);font-size:13px">Nenhuma pendência no momento 🎉</div>';
+  var existing = document.getElementById('modal-notificacoes');
+  if (existing) existing.remove();
+  var html =
+    '<div id="modal-notificacoes" class="modal-bg" style="display:flex" onclick="if(event.target===this)this.remove()">'+
+      '<div class="modal-box" style="width:360px;max-height:70vh;padding:0;overflow:hidden;display:flex;flex-direction:column">'+
+        '<div style="padding:18px 20px 12px;border-bottom:1px solid var(--gray2)"><div class="modal-title" style="margin:0">🔔 Pendências</div></div>'+
+        '<div style="overflow-y:auto">'+listaHtml+'</div>'+
+        '<div style="padding:12px 20px"><button class="btn btn-s" style="width:100%" onclick="document.getElementById(\'modal-notificacoes\').remove()">Fechar</button></div>'+
+      '</div>'+
+    '</div>';
+  document.body.insertAdjacentHTML('beforeend', html);
 }
 
 // Verifica se submissão de checklist deve ser bloqueada por plano vencido
