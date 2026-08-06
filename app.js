@@ -1642,6 +1642,13 @@ function setupRole() {
   show('nav-inv-gestao', isAdmin && !isColetor && _moduloAtivo('inventario'));
   show('nav-inv-coleta', false);
   show('nav-capa', true);
+  var mostrarEmBreve = isAdmin || r==='gerencia' || isSup;
+  show('sb-embreve-sec', mostrarEmBreve);
+  show('nav-embreve-promotores', mostrarEmBreve);
+  show('nav-embreve-pesquisa', mostrarEmBreve);
+  show('nav-embreve-recebimento', mostrarEmBreve);
+  show('nav-embreve-validade', mostrarEmBreve);
+  show('nav-embreve-etiquetas', mostrarEmBreve);
   if (isAdmOrGer || isSup) {
     pedirPermissaoNotificacao();
     setTimeout(iniciarVerificacaoPeriodica, 3000);
