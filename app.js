@@ -1374,6 +1374,17 @@ function finalizarLogin(found) {
   }
   document.getElementById('loginScreen').style.display='none';
   document.getElementById('app').style.display='flex';
+  // Troca o painel ativo pra capa JÁ, antes de qualquer carregamento do
+  // Firebase — panel-dashboard vem com class="active" fixo no HTML, então
+  // sem isso o dashboard (vazio) pisca na tela por até alguns segundos no
+  // mobile enquanto os dados carregam, antes do nav('capa',...) em
+  // iniciarApp() trocar de novo pra capa. renderCapa() com os cards de
+  // verdade roda depois, quando iniciarApp() chama nav('capa',...).
+  if (window.innerWidth <= 768 && found.perfil !== 'superadmin') {
+    document.querySelectorAll('.panel').forEach(function(p){ p.classList.remove('active'); });
+    var _capaPanelCedo = document.getElementById('panel-capa');
+    if (_capaPanelCedo) _capaPanelCedo.classList.add('active');
+  }
   setupRole();
   setDate();
   checkMobile();
