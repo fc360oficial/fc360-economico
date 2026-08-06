@@ -1455,6 +1455,12 @@ function finalizarLogin(found) {
       renderPainelClientes();
       return;
     }
+    // Mobile: a capa de módulos é sempre a tela inicial (não retoma lastPage) —
+    // navegar entre módulos usa nav() normalmente; "Início" na sidebar volta pra cá.
+    if (window.innerWidth <= 768) {
+      nav('capa', document.getElementById('nav-capa'));
+      return;
+    }
     var pagesForRole = {
       admin:      ['dashboard','checklist','central','relatorios','usuarios','plano','inv','inv-coleta'],
       gerencia:   ['checklist','relatorios','plano'],
@@ -1607,7 +1613,7 @@ function setupRole() {
     show('nav-clientes', true);
     ['sb-adm-sec','tab-gerenciar','nav-dashboard','nav-central','nav-relat',
      'nav-assistente','nav-monitor','nav-token','btn-zerar-dados','nav-users','nav-alertas',
-     'nav-plano','nav-checklist','nav-sec-checklist','sb-inv-sec','nav-inv-gestao','nav-inv-coleta'
+     'nav-plano','nav-checklist','nav-sec-checklist','sb-inv-sec','nav-inv-gestao','nav-inv-coleta','nav-capa'
     ].forEach(function(id){ show(id, false); });
     return;
   }
@@ -1635,6 +1641,7 @@ function setupRole() {
   show('sb-inv-sec', isAdmin && !isColetor && _moduloAtivo('inventario'));
   show('nav-inv-gestao', isAdmin && !isColetor && _moduloAtivo('inventario'));
   show('nav-inv-coleta', false);
+  show('nav-capa', true);
   if (isAdmOrGer || isSup) {
     pedirPermissaoNotificacao();
     setTimeout(iniciarVerificacaoPeriodica, 3000);
@@ -1723,6 +1730,9 @@ function nav(page, el) {
   if (panel) panel.classList.add('active');
   if (el) el.classList.add('active');
   document.getElementById('pageTitle').textContent = PAGE_TITLES[page]||page;
+  if (page==='capa') {
+    renderCapa();
+  }
   if (page==='relatorios') {
     initRelCharts();
     loadResultadosFromFirebase(function(){
