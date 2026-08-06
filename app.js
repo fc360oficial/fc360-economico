@@ -1002,6 +1002,52 @@ function _capaEstado(mod) {
   return 'vivo';
 }
 
+function _avisoEmBreve(nomeModulo) {
+  showToast('🚧 ' + nomeModulo + ' está em desenvolvimento. Em breve na sua loja!');
+}
+
+function abrirModalUpgrade(nomeModulo) {
+  var existing = document.getElementById('modal-upgrade-modulo');
+  if (existing) existing.remove();
+  var html =
+    '<div id="modal-upgrade-modulo" class="modal-bg" style="display:flex" onclick="if(event.target===this)this.remove()">'+
+      '<div class="modal-box" style="width:340px;text-align:center">'+
+        '<div style="font-size:40px;margin-bottom:10px">🔒</div>'+
+        '<div class="modal-title" style="margin-bottom:8px">'+nomeModulo+'</div>'+
+        '<div style="font-size:13px;color:var(--t2);margin-bottom:20px;line-height:1.5">Este módulo não está incluído no seu plano atual. Fale com a Fluxo Certo para ativar.</div>'+
+        '<a href="mailto:suporte@fluxocerto.com.br?subject=Quero%20ativar%20'+encodeURIComponent(nomeModulo)+'" class="btn btn-p" style="display:block;text-decoration:none;margin-bottom:8px">Falar com a Fluxo</a>'+
+        '<button class="btn btn-s" style="width:100%" onclick="document.getElementById(\'modal-upgrade-modulo\').remove()">Fechar</button>'+
+      '</div>'+
+    '</div>';
+  document.body.insertAdjacentHTML('beforeend', html);
+}
+
+function renderCapa() {
+  var grid = document.getElementById('capa-grid');
+  if (!grid) return;
+  var html = CAPA_MODULOS.map(function(mod) {
+    var estado = _capaEstado(mod);
+    if (estado === 'oculto') return '';
+    var cls = 'capa-card' + (estado==='vivo' ? '' : ' capa-card-inativo');
+    var pill = estado==='em_breve' ? '<span class="capa-pill">Em breve</span>'
+             : estado==='cadeado' ? '<span class="capa-pill capa-pill-cadeado">🔒</span>' : '';
+    var labelEsc = mod.label.replace(/'/g, "\\'");
+    var onclick = estado==='vivo' ? "nav('"+mod.page()+"',this)"
+                : estado==='cadeado' ? "abrirModalUpgrade('"+labelEsc+"')"
+                : "_avisoEmBreve('"+labelEsc+"')";
+    return '<div class="'+cls+'" onclick="'+onclick+'">'
+      + '<div class="capa-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">'+mod.icone+'</svg></div>'
+      + '<div class="capa-card-label">'+mod.label+'</div>'
+      + pill
+      + '</div>';
+  }).join('');
+  html += '<div class="capa-card capa-card-saida" onclick="if(confirm(\'Deseja realmente sair?\'))doLogout()">'
+    + '<div class="capa-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg></div>'
+    + '<div class="capa-card-label">Saída</div>'
+    + '</div>';
+  grid.innerHTML = html;
+}
+
 function carregarClienteConfig(cb) {
   // client.js do deploy tem prioridade; fallback para clienteId do usuário
   var clienteId = (window.FC360_CLIENT_ID && window.FC360_CLIENT_ID.trim())
