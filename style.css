@@ -50,7 +50,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#eef1f5;color:var(--t
 .sb-item-embreve:hover{opacity:.75}
 .sb-item-embreve-pill{margin-left:auto;font-size:8px;font-weight:700;background:rgba(0,0,0,.12);color:rgba(0,0,0,.55);padding:2px 6px;border-radius:20px;letter-spacing:.3px;flex-shrink:0}
 #nav-capa{display:none}
-.sb-user{padding:12px 16px;border-top:1px solid rgba(0,0,0,.12)}
+.sb-user{display:none;padding:12px 16px;border-top:1px solid rgba(0,0,0,.12)}
 .sb-user .role{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:rgba(0,0,0,.4)}
 .sb-user .name{font-size:13px;color:#111;margin-top:2px;font-weight:700}
 .sb-out{font-size:10.5px;color:rgba(0,0,0,.4);cursor:pointer;margin-top:5px;display:inline-block}
@@ -174,7 +174,19 @@ tbody tr:hover td{background:#fafcfa}
   .sb.open { left: 0; }
   #nav-capa { display: flex; }
   .sb-user {
+    display: block;
     padding-bottom: 80px;
+    cursor: pointer;
+  }
+  .sb-user:active { background: rgba(0,0,0,.06); }
+
+  /* Usuário sai do topbar no mobile — vira o rodapé da sidebar acima */
+  #topbar-user-wrap { display: none; }
+  #topbar-user-menu {
+    position: fixed !important;
+    left: 16px; right: 16px; width: auto;
+    top: auto !important; bottom: 90px;
+    z-index: 600 !important;
   }
 
   /* Overlay when sidebar open */
@@ -282,13 +294,15 @@ tbody tr:hover td{background:#fafcfa}
 .tend-btn{background:rgba(0,0,0,.06);border:1px solid var(--gray2);color:var(--t3);font-size:11px;font-weight:600;padding:4px 11px;border-radius:7px;cursor:pointer;transition:all .15s}
 .tend-btn.tend-btn-active{background:var(--dk);color:#000;border-color:var(--dk)}
 
-/* CAPA DE MÓDULOS (tela inicial mobile) */
-.capa-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:520px;margin:0 auto}
-.capa-card{position:relative;background:var(--w);border:1px solid rgba(0,0,0,.06);border-radius:var(--r14);box-shadow:var(--sh);padding:16px 8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;cursor:pointer;text-align:center;transition:transform .12s}
+/* CAPA DE MÓDULOS (tela inicial mobile) — dimensionada pra caber 12 cards
+   (4 linhas de 3) na primeira dobra sem rolagem; módulos além de 12 descem
+   naturalmente na rolagem da própria página, sem precisar redimensionar de novo. */
+.capa-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;max-width:520px;margin:0 auto}
+.capa-card{position:relative;background:var(--w);border:1px solid rgba(0,0,0,.06);border-radius:var(--r10);box-shadow:var(--sh);padding:12px 6px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;cursor:pointer;text-align:center;transition:transform .12s}
 .capa-card:active{transform:scale(.96)}
-.capa-card-icon{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#FFC600,#e6b200);display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.capa-card-icon svg{width:20px;height:20px;color:#111}
-.capa-card-label{font-size:11.5px;font-weight:600;line-height:1.25;color:var(--t)}
+.capa-card-icon{width:38px;height:38px;border-radius:50%;background:linear-gradient(135deg,#FFC600,#e6b200);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.capa-card-icon svg{width:17px;height:17px;color:#111}
+.capa-card-label{font-size:10.5px;font-weight:600;line-height:1.2;color:var(--t)}
 .capa-card-inativo{opacity:.55}
 .capa-card-inativo .capa-card-icon{background:var(--gray2)}
 .capa-card-inativo .capa-card-icon svg{color:var(--t3)}
