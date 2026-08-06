@@ -276,3 +276,22 @@ tbody tr:hover td{background:#fafcfa}
 /* Tendência period toggle */
 .tend-btn{background:rgba(0,0,0,.06);border:1px solid var(--gray2);color:var(--t3);font-size:11px;font-weight:600;padding:4px 11px;border-radius:7px;cursor:pointer;transition:all .15s}
 .tend-btn.tend-btn-active{background:var(--dk);color:#000;border-color:var(--dk)}
+
+/* CAPA DE MÓDULOS (tela inicial mobile) */
+.capa-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;max-width:520px;margin:0 auto}
+.capa-card{position:relative;background:var(--w);border:1px solid rgba(0,0,0,.06);border-radius:var(--r14);box-shadow:var(--sh);padding:16px 8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;cursor:pointer;text-align:center;transition:transform .12s}
+.capa-card:active{transform:scale(.96)}
+.capa-card-icon{width:44px;height:44px;border-radius:50%;background:linear-gradient(135deg,#FFC600,#e6b200);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.capa-card-icon svg{width:20px;height:20px;color:#111}
+.capa-card-label{font-size:11.5px;font-weight:600;line-height:1.25;color:var(--t)}
+.capa-card-inativo{opacity:.55}
+.capa-card-inativo .capa-card-icon{background:var(--gray2)}
+.capa-card-inativo .capa-card-icon svg{color:var(--t3)}
+.capa-pill{position:absolute;top:6px;right:6px;font-size:8.5px;font-weight:700;background:var(--gray2);color:var(--t2);padding:2px 6px;border-radius:20px;letter-spacing:.3px}
+.capa-pill-cadeado{background:#fef3cd;color:#856404;font-size:11px;padding:2px 5px}
+.capa-card-saida .capa-card-icon{background:linear-gradient(135deg,#f87171,#b91c1c)}
+.capa-card-saida .capa-card-icon svg{color:#fff}
+
+@media (max-width: 380px) {
+  .capa-grid{grid-template-columns:repeat(2,1fr)}
+}
