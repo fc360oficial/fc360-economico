@@ -954,6 +954,54 @@ function _moduloAtivo(nome) {
   return m[nome] !== false;
 }
 
+// ── Capa de módulos (tela inicial mobile) ────────────────────────────────
+// Cada item descreve um card da capa. "desenvolvido:false" = módulo ainda
+// não existe (aparece sempre em breve). Para os desenvolvidos, roleOk()
+// espelha a metade "papel" das condições já usadas em setupRole() (não
+// reusamos a visibilidade dos nav-* porque lá papel+contrato ficam
+// misturados num show() só — aqui precisamos separar os dois para poder
+// distinguir "oculto" de "cadeado").
+var CAPA_MODULOS = [
+  { id:'checklist', label:'Checklist', desenvolvido:true, moduloChave:'checklist',
+    roleOk: function(){ return S.role !== 'coletor'; },
+    page: function(){ return 'checklist'; },
+    icone:'<polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>' },
+  { id:'inventario', label:'Inventário', desenvolvido:true, moduloChave:'inventario',
+    roleOk: function(){
+      if (S.role === 'admin') return true;
+      if (S.role === 'coletor') return (S.invsCache||[]).some(function(i){ return i.status==='aberto'; });
+      return false;
+    },
+    page: function(){ return S.role === 'admin' ? 'inv' : 'inv-coleta'; },
+    icone:'<path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/>' },
+  { id:'plano', label:'Planos de Ação', desenvolvido:true, moduloChave:'planos_acao',
+    roleOk: function(){ return S.role==='admin' || S.role==='supervisor' || S.role==='gerencia'; },
+    page: function(){ return 'plano'; },
+    icone:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>' },
+  { id:'promotores', label:'Promotores', desenvolvido:false,
+    icone:'<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>' },
+  { id:'pesquisa', label:'Pesquisa Concorrentes', desenvolvido:false,
+    icone:'<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>' },
+  { id:'recebimento', label:'Recebimento', desenvolvido:false,
+    icone:'<rect x="1" y="7" width="15" height="13" rx="2"/><path d="M16 11h3l3 4v5h-6"/><circle cx="6" cy="20" r="1.5"/><circle cx="17" cy="20" r="1.5"/>' },
+  { id:'validade', label:'Validade', desenvolvido:false,
+    icone:'<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>' },
+  { id:'etiquetas', label:'Etiquetas e Ofertas', desenvolvido:false,
+    icone:'<path d="M20.59 13.41L11 3.83V3h.01L20.59 12.59a2 2 0 010 2.82z"/><path d="M11 3H4a1 1 0 00-1 1v7l9.59 9.59a2 2 0 002.82 0l6.18-6.18a2 2 0 000-2.82z"/><circle cx="7.5" cy="7.5" r="1.5"/>' }
+];
+
+// Estado de um card da capa, nesta ordem de prioridade:
+// 1. não desenvolvido → sempre "em_breve" (nunca oculta, é vitrine)
+// 2. papel sem acesso → "oculto" (nem aparece)
+// 3. desenvolvido + papel ok, mas módulo desligado no plano do cliente → "cadeado"
+// 4. caso contrário → "vivo"
+function _capaEstado(mod) {
+  if (!mod.desenvolvido) return 'em_breve';
+  if (!mod.roleOk()) return 'oculto';
+  if (!_moduloAtivo(mod.moduloChave)) return 'cadeado';
+  return 'vivo';
+}
+
 function carregarClienteConfig(cb) {
   // client.js do deploy tem prioridade; fallback para clienteId do usuário
   var clienteId = (window.FC360_CLIENT_ID && window.FC360_CLIENT_ID.trim())
