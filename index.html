@@ -129,6 +129,9 @@
       <div class="topbar-r">
         <span class="tdate" id="tbDate"></span>
         <span class="badge badge-op" id="tbBadge" style="display:none">Operador</span>
+        <button id="capa-bell" onclick="abrirPainelNotificacoes()" style="display:none;position:relative;background:none;border:none;cursor:pointer;padding:6px;font-size:18px;line-height:1;margin-right:2px" title="Pendências">
+          🔔<span id="capa-bell-badge" style="display:none;position:absolute;top:0;right:0;background:#e67e22;color:#fff;border-radius:50%;min-width:16px;height:16px;font-size:9px;font-weight:700;align-items:center;justify-content:center;line-height:1;padding:0 3px">0</span>
+        </button>
         <div style="position:relative" id="topbar-user-wrap">
           <button onclick="toggleUserMenu()" id="topbar-user-btn" style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:5px 10px 5px 6px;border-radius:10px;border:1.5px solid rgba(0,0,0,.09);background:#fff;font-family:inherit;transition:all .15s">
             <div id="topbar-user-ini" style="width:28px;height:28px;border-radius:50%;background:linear-gradient(135deg,#3b82f6,#1d4ed8);display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:#fff;flex-shrink:0">—</div>
