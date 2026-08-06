@@ -204,7 +204,7 @@ tbody tr:hover td{background:#fafcfa}
 
   /* Hamburger button */
   #btn-hamburger {
-    display: flex; align-items: center; justify-content: center;
+    display: flex !important; align-items: center; justify-content: center;
     width: 38px; height: 38px; background: #FFC600; border: none;
     border-radius: 8px; cursor: pointer; font-size: 18px; flex-shrink: 0;
   }
