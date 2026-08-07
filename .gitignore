@@ -10,3 +10,6 @@ data/conciliacoes-avulsas.json
 data/pontas-gondola.json
 data/contratos-ponta-gondola/
 data/avaria-mensal-congelado.json
+data/cd-notas-avulsas.json
+data/itau/certificado.pfx
+data/itau/config.json

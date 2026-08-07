@@ -6,7 +6,7 @@ const bcrypt = require('bcryptjs');
 const fs = require('fs');
 const { exec } = require('child_process');
 const { parseSaidas, parseSaidasOfx } = require('./lib/extrato-parser');
-const { conciliar, addDias, TOLERANCIA_DIAS: TOLERANCIA_CONCILIADOR, chaveSaida, aplicarAvulsos } = require('./lib/conciliador');
+const { conciliar, addDias, similaridadeNome, normalizarNome, TOLERANCIA_DIAS: TOLERANCIA_CONCILIADOR, chaveSaida, aplicarAvulsos } = require('./lib/conciliador');
 const multer = require('multer');
 const pontaGondola = require('./lib/ponta-gondola');
 
@@ -3995,6 +3995,348 @@ app.post('/api/conciliador/confirmar-avulso', (req, res) => {
   } catch (err) {
     console.error('[CONCILIADOR-AVULSO-ERR]', err.message);
     res.status(500).json({ error: err.message || 'Erro ao salvar conciliação avulsa.' });
+  }
+});
+
+// ── CONCILIADOR CD — SAÍDAS POR DESTINATÁRIO ────────────
+// O CD tem conta bancária própria (sem títulos no ERP das lojas pra cruzar),
+// então aqui não há casamento com contasapagar — só organiza as saídas do
+// extrato (mesmo parser do Conciliador, ver lib/extrato-parser.js) agrupando
+// por favorecido, com total e quantidade de lançamentos por pessoa/empresa.
+//
+// Opcionalmente cruza cada saída com a Entrada de Notas (NFe recebida) de
+// uma loja específica — central.compras, Status='F' (fechada) — casando por
+// Valor exato dentro de uma janela de data (a nota costuma entrar bem antes
+// do boleto ser pago, por isso a janela é assimétrica: bastante tempo antes
+// da saída, pouco depois). Valor sozinho casa por coincidência demais num
+// universo de milhares de notas de fornecedores diferentes (ex: um SISPAG de
+// R$60 pra uma pessoa física "casando" com uma nota de R$60 de uma
+// distribuidora de combustível) — por isso também exige similaridade mínima
+// entre o favorecido do banco e o fornecedor da nota (mesma função de nome
+// usada no Conciliador de loja). Quando mais de uma nota passa no corte de
+// similaridade com o mesmo valor, todas ficam expostas como candidatas — a
+// de maior similaridade (e, empatando, a mais próxima da data) vira o match
+// sugerido, sem esconder a ambiguidade do usuário.
+const SIMILARIDADE_MINIMA_NOTA = 0.34;
+
+// similaridadeNome sozinha deixa passar coincidências por sufixo genérico de
+// razão social (ex: "W E SPEEDFIBRA LTDA" x "OLINDA COMERCIO DE ALIMENTOS
+// LTDA" batem em 0.5 só por causa de "LTDA") — então também exige pelo menos
+// uma palavra específica em comum, fora desses termos genéricos.
+const TOKENS_GENERICOS_RAZAO_SOCIAL = new Set([
+  'LTDA', 'LTD', 'SA', 'EIRELI', 'ME', 'EPP', 'MEI', 'COM', 'COMERCIO',
+  'COMERCIAL', 'IMPORTACAO', 'EXPORTACAO', 'INDUSTRIA', 'INDUSTRIAL',
+  'ALIMENTOS', 'ALIMENTICIOS', 'DISTRIBUIDORA', 'DISTRIBUICAO'
+]);
+
+function temTokenEspecificoComum(a, b) {
+  const ta = new Set(normalizarNome(a).split(' ').filter(t => t.length > 2 && !TOKENS_GENERICOS_RAZAO_SOCIAL.has(t)));
+  const tb = new Set(normalizarNome(b).split(' ').filter(t => t.length > 2 && !TOKENS_GENERICOS_RAZAO_SOCIAL.has(t)));
+  for (const t of ta) if (tb.has(t)) return true;
+  return false;
+}
+
+function diasEntre(a, b) {
+  return Math.round(Math.abs(new Date(a) - new Date(b)) / 86400000);
+}
+
+async function casarComEntradaNotas(saidas, lojaRecebimento) {
+  if (!lojaRecebimento) return saidas;
+  const datas = saidas.map(s => s.data).sort();
+  const dIni = addDias(datas[0], -60);
+  const dFim = addDias(datas[datas.length - 1], 5);
+
+  // DataRecto = quando a mercadoria/nota entrou de fato no ERP (recebimento),
+  // diferente de DataEmissao (data que o fornecedor emitiu a NFe — pode ser
+  // uns dias antes). Casa pela data de recebimento (mais perto de quando o
+  // pagamento sai), mas mostra as duas pro Tiago.
+  const candidatos = await q(
+    `SELECT nCompra, nNota, NomeFornec, TotalNota, chave, CNPJ,
+            DATE_FORMAT(DataRecto,'%Y-%m-%d') as DataRecebimento,
+            DATE_FORMAT(DataEmissao,'%Y-%m-%d') as DataEmissao
+     FROM central.compras
+     WHERE nLoja = ? AND Status = 'F' AND DataRecto BETWEEN ? AND ?`,
+    [lojaRecebimento, dIni, dFim]
+  );
+
+  const porValor = new Map();
+  for (const c of candidatos) {
+    const key = Number(c.TotalNota).toFixed(2);
+    if (!porValor.has(key)) porValor.set(key, []);
+    porValor.get(key).push(c);
+  }
+
+  // Valor redondo (R$1.000,00 etc.) colide com dezenas de fornecedores sem
+  // relação nenhuma (achado testando: um SISPAG de supermercado "casando"
+  // com nota de posto de combustível só pela coincidência do valor) — então
+  // só assume um match "por valor" quando ele é o único candidato dentro de
+  // uma janela curta e plausível. Se tiver mais de um concorrendo, é ruído
+  // demais pra apontar um "melhor palpite": melhor dizer que não é confiável
+  // do que arriscar um fornecedor errado.
+  const JANELA_VALOR_SOZINHO_DIAS = 20;
+
+  function montarNota(x, confianca) {
+    return { nCompra: x.c.nCompra, nNota: x.c.nNota, fornecedor: x.c.NomeFornec, dataEmissao: x.c.DataEmissao, dataRecebimento: x.c.DataRecebimento, chave: x.c.chave, confianca };
+  }
+  function soDigitos(v) { return (v || '').replace(/\D/g, ''); }
+
+  return saidas.map(s => {
+    // Uma só avaliação por candidata: nome (similaridade + token
+    // específico) e CNPJ (quando o memo do banco trouxe um documento) —
+    // CNPJ batendo já basta pra confirmar sozinho, mesmo se o nome não
+    // bater bem (razão social pode vir abreviada/diferente no banco).
+    const docSaida = s.tipoDocumento === 'CNPJ' ? soDigitos(s.documento) : '';
+    const poolBruto = (porValor.get(s.valor.toFixed(2)) || []).map(c => {
+      const sim = similaridadeNome(s.favorecido, c.NomeFornec);
+      const cnpjBate = !!docSaida && docSaida === soDigitos(c.CNPJ);
+      const nomeConfere = cnpjBate || (sim >= SIMILARIDADE_MINIMA_NOTA && temTokenEspecificoComum(s.favorecido, c.NomeFornec));
+      return { c, sim, cnpjBate, nomeConfere, dias: diasEntre(s.data, c.DataRecebimento) };
+    });
+
+    const comNome = poolBruto.filter(x => x.nomeConfere).sort((a, b) => (b.cnpjBate - a.cnpjBate) || (b.sim - a.sim) || (a.dias - b.dias));
+
+    // CNPJ batendo em exatamente uma candidata resolve sozinho, mesmo se
+    // o nome deixou mais de uma passar no corte de similaridade — CNPJ é
+    // prova definitiva, não precisa de escolha manual nesse caso.
+    const cnpjUnico = comNome.filter(x => x.cnpjBate);
+    if (cnpjUnico.length === 1) {
+      return { ...s, nota: montarNota(cnpjUnico[0], 'nome'), notaCandidatos: [] };
+    }
+    if (comNome.length === 1) {
+      return { ...s, nota: montarNota(comNome[0], 'nome'), notaCandidatos: [] };
+    }
+    if (comNome.length > 1) {
+      // Mais de uma nota do mesmo fornecedor com o valor idêntico — não
+      // escolhe pela data mais próxima sozinho, deixa o Tiago decidir (ele
+      // pediu: "fica na dúvida qual é a nota certa").
+      return { ...s, nota: null, notaCandidatos: comNome.map(x => montarNota(x, 'nome')) };
+    }
+
+    const proximos = poolBruto.filter(x => x.dias <= JANELA_VALOR_SOZINHO_DIAS).sort((a, b) => a.dias - b.dias);
+    if (proximos.length === 1) {
+      return { ...s, nota: montarNota(proximos[0], 'valor'), notaCandidatos: [] };
+    }
+    if (poolBruto.length) {
+      // Ambíguo: não escolhe por conta própria — expõe todas as candidatas
+      // (ordenadas pela mais próxima da data) pro Tiago escolher manualmente
+      // qual é a nota certa (ver /api/conciliador-cd/confirmar-nota).
+      const ordenadas = [...poolBruto].sort((a, b) => a.dias - b.dias);
+      return { ...s, nota: null, notaCandidatos: ordenadas.map(x => montarNota(x, 'valor')) };
+    }
+    return { ...s, nota: null, notaCandidatos: [] };
+  });
+}
+
+// Notas confirmadas manualmente pelo Tiago quando o valor bate em mais de
+// uma nota (ver casarComEntradaNotas) — persistidas em JSON local, mesmo
+// padrão de conciliacoes-avulsas.json, pra sobreviver a reprocessar o
+// extrato. Uma vez confirmada, a nota vira confiança 'manual' (pintada de
+// verde igual 'nome') e nunca mais volta a ficar ambígua nesse item.
+const CD_NOTAS_AVULSAS_PATH = path.join(__dirname, 'data', 'cd-notas-avulsas.json');
+function carregarCdNotasAvulsas() {
+  try { return JSON.parse(fs.readFileSync(CD_NOTAS_AVULSAS_PATH, 'utf8')); } catch (e) { return []; }
+}
+function salvarCdNotasAvulsas(lista) {
+  fs.mkdirSync(path.dirname(CD_NOTAS_AVULSAS_PATH), { recursive: true });
+  fs.writeFileSync(CD_NOTAS_AVULSAS_PATH, JSON.stringify(lista, null, 2));
+}
+async function aplicarCdNotasAvulsas(saidas) {
+  const avulsos = carregarCdNotasAvulsas();
+  if (!avulsos.length) return saidas;
+
+  // Sempre reconfere a chave pelo nCompra (não só quando falta) — evita
+  // ficar com uma chaveNfe desatualizada/errada presa no JSON (ex: avulso
+  // salvo antes desse campo existir direito, ou qualquer inconsistência
+  // passada) fazendo "ver nota" dar XML não encontrado à toa.
+  const comNCompra = avulsos.filter(a => a.nCompra);
+  if (comNCompra.length) {
+    const nCompras = [...new Set(comNCompra.map(a => a.nCompra))];
+    const rows = await q(`SELECT nCompra, chave FROM central.compras WHERE nCompra IN (?)`, [nCompras]).catch(() => []);
+    const chavePorCompra = new Map(rows.map(r => [r.nCompra, r.chave]));
+    let mudou = false;
+    for (const a of comNCompra) {
+      const chave = chavePorCompra.get(a.nCompra);
+      if (chave && chave !== a.chaveNfe) { a.chaveNfe = chave; mudou = true; }
+    }
+    if (mudou) salvarCdNotasAvulsas(avulsos);
+  }
+
+  const porChave = new Map(avulsos.map(a => [a.chave, a]));
+  return saidas.map(s => {
+    const av = porChave.get(chaveSaida(s));
+    if (!av) return s;
+    if (av.semNota) {
+      // Tiago revisou e confirmou que nenhuma nota candidata é essa saída —
+      // fica travado em "Não encontrada", não volta a mostrar as candidatas
+      // ambíguas de novo a cada reprocessamento.
+      return { ...s, nota: null, notaCandidatos: [], semNotaConfirmado: true };
+    }
+    return {
+      ...s,
+      nota: { nCompra: av.nCompra, nNota: av.nNota, fornecedor: av.fornecedor, dataEmissao: av.dataEmissao, dataRecebimento: av.dataRecebimento, chave: av.chaveNfe, confianca: 'manual' },
+      notaCandidatos: []
+    };
+  });
+}
+
+app.post('/api/conciliador-cd/processar', async (req, res) => {
+  try {
+    const texto = (req.body && req.body.texto) || '';
+    const lojaRecebimento = parseInt(req.body && req.body.lojaRecebimento) || null;
+    if (!texto.trim()) return res.status(400).json({ error: 'Cole ou importe o extrato antes de processar.' });
+
+    const ehOfx = /<OFX>|<STMTTRN>/i.test(texto);
+    let saidas = ehOfx ? parseSaidasOfx(texto) : parseSaidas(texto);
+    if (!saidas.length) return res.status(400).json({ error: ehOfx ? 'Nenhuma saída encontrada no OFX.' : 'Nenhuma saída encontrada no texto colado. Confira o formato (data;histórico;valor;).' });
+
+    if (lojaRecebimento) saidas = await aplicarCdNotasAvulsas(await casarComEntradaNotas(saidas, lojaRecebimento));
+
+    const porFavorecido = new Map();
+    let totalValor = 0;
+    for (const s of saidas) {
+      const chave = s.favorecido || '(sem identificação)';
+      if (!porFavorecido.has(chave)) porFavorecido.set(chave, { favorecido: chave, total: 0, qtde: 0 });
+      const g = porFavorecido.get(chave);
+      g.total += s.valor;
+      g.qtde++;
+      totalValor += s.valor;
+    }
+    const totais = [...porFavorecido.values()]
+      .map(g => ({ ...g, total: +g.total.toFixed(2) }))
+      .sort((a, b) => b.total - a.total);
+
+    res.json({ total: saidas.length, totalValor: +totalValor.toFixed(2), itens: saidas, totais, lojaRecebimento });
+  } catch (err) {
+    console.error('[CONCILIADOR-CD-ERR]', err.message);
+    res.status(500).json({ error: err.message || 'Erro ao processar extrato do CD.' });
+  }
+});
+
+// Confirma manualmente qual nota (dentre as candidatas ambíguas de mesmo
+// valor) é a certa pra uma saída do CD — ver aplicarCdNotasAvulsas.
+app.post('/api/conciliador-cd/confirmar-nota', (req, res) => {
+  try {
+    const { saida, escolha, semNota } = req.body || {};
+    if (!saida || (!escolha && !semNota)) return res.status(400).json({ error: 'Informe a saída e a nota escolhida (ou semNota pra marcar como não encontrada).' });
+    const lista = carregarCdNotasAvulsas();
+    const chave = chaveSaida(saida);
+    const registro = semNota ? {
+      chave,
+      dataSaida: saida.data, valorSaida: saida.valor, favorecidoSaida: saida.favorecido,
+      semNota: true,
+      confirmadoEm: new Date().toISOString(),
+      confirmadoPor: (req.session && req.session.user && req.session.user.nome) || 'desconhecido'
+    } : {
+      chave,
+      dataSaida: saida.data, valorSaida: saida.valor, favorecidoSaida: saida.favorecido,
+      nCompra: escolha.nCompra, nNota: escolha.nNota, fornecedor: escolha.fornecedor, dataEmissao: escolha.dataEmissao, dataRecebimento: escolha.dataRecebimento,
+      chaveNfe: escolha.chave,
+      confirmadoEm: new Date().toISOString(),
+      confirmadoPor: (req.session && req.session.user && req.session.user.nome) || 'desconhecido'
+    };
+    const idx = lista.findIndex(a => a.chave === chave);
+    if (idx >= 0) lista[idx] = registro; else lista.push(registro);
+    salvarCdNotasAvulsas(lista);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[CONCILIADOR-CD-AVULSO-ERR]', err.message);
+    res.status(500).json({ error: err.message || 'Erro ao confirmar nota.' });
+  }
+});
+
+// Detalhe de uma NFe pelo XML autorizado (central.arquivoxml, indexado pela
+// chave de acesso de 44 dígitos que já vem em central.compras.chave) — sem
+// dependência de lib de XML, extrai só os campos que interessam por regex
+// (schema da NFe é fixo/conhecido). Não é um DANFE oficial pixel-perfect,
+// mas mostra os dados reais da nota autorizada pela SEFAZ (itens, valores,
+// emitente/destinatário, duplicatas, protocolo de autorização).
+function tagXml(bloco, nome) {
+  const m = bloco.match(new RegExp(`<${nome}>([^<]*)</${nome}>`));
+  return m ? m[1] : '';
+}
+function blocoXml(xml, nome) {
+  const m = xml.match(new RegExp(`<${nome}[^>]*>([\\s\\S]*?)<\\/${nome}>`));
+  return m ? m[1] : '';
+}
+function extrairNotaXml(xmlCompleto) {
+  const inf = blocoXml(xmlCompleto, 'infNFe') || xmlCompleto;
+  const ide = blocoXml(inf, 'ide');
+  const emit = blocoXml(inf, 'emit');
+  const dest = blocoXml(inf, 'dest');
+  const total = blocoXml(inf, 'ICMSTot');
+  const prot = blocoXml(xmlCompleto, 'protNFe');
+
+  const itens = [...inf.matchAll(/<det nItem="(\d+)">([\s\S]*?)<\/det>/g)].map(m => {
+    const prod = blocoXml(m[2], 'prod');
+    return {
+      item: m[1], codigo: tagXml(prod, 'cProd'), descricao: tagXml(prod, 'xProd'),
+      qtd: tagXml(prod, 'qCom'), unidade: tagXml(prod, 'uCom'),
+      valorUnit: tagXml(prod, 'vUnCom'), valorTotal: tagXml(prod, 'vProd')
+    };
+  });
+
+  const duplicatas = [...inf.matchAll(/<dup>([\s\S]*?)<\/dup>/g)].map(m => ({
+    numero: tagXml(m[1], 'nDup'), vencimento: tagXml(m[1], 'dVenc'), valor: tagXml(m[1], 'vDup')
+  }));
+
+  return {
+    numero: tagXml(ide, 'nNF'), serie: tagXml(ide, 'serie'), dataEmissao: tagXml(ide, 'dhEmi'),
+    naturezaOperacao: tagXml(ide, 'natOp'),
+    emitente: { nome: tagXml(emit, 'xNome'), fantasia: tagXml(emit, 'xFant'), cnpj: tagXml(emit, 'CNPJ'), ie: tagXml(emit, 'IE') },
+    destinatario: { nome: tagXml(dest, 'xNome'), cnpj: tagXml(dest, 'CNPJ') },
+    itens,
+    valorProdutos: tagXml(total, 'vProd'),
+    desconto: tagXml(total, 'vDesc'),
+    frete: tagXml(total, 'vFrete'),
+    outrasDespesas: tagXml(total, 'vOutro'),
+    valorTotal: tagXml(total, 'vNF'),
+    duplicatas,
+    protocolo: { numero: tagXml(prot, 'nProt'), dataRecebimento: tagXml(prot, 'dhRecbto'), status: tagXml(prot, 'xMotivo'), chave: tagXml(prot, 'chNFe') }
+  };
+}
+
+app.get('/api/conciliador-cd/nota-detalhe', async (req, res) => {
+  try {
+    const chave = (req.query.chave || '').replace(/[^0-9]/g, '');
+    if (chave.length !== 44) return res.status(400).json({ error: 'Chave de acesso inválida.' });
+    const [rows, compraRows] = await Promise.all([
+      q('SELECT xml FROM central.arquivoxml WHERE chave = ?', [chave]),
+      // NomeConferente costuma vir "0" (não confiável) — quem processou o
+      // recebimento de fato é NomeOperador; DataConferencia/HoraConferencia
+      // é quando a conferência da mercadoria foi fechada. Isso não é parte
+      // do XML fiscal, é dado operacional interno do ERP.
+      q(`SELECT NomeOperador, DATE_FORMAT(DataConferencia,'%Y-%m-%d') as DataConferencia, HoraConferencia, Movimentacao
+         FROM central.compras WHERE chave = ? LIMIT 1`, [chave]).catch(() => [])
+    ]);
+    if (!rows.length || !rows[0].xml) return res.status(404).json({ error: 'XML da nota não encontrado no ERP.' });
+    const detalhe = extrairNotaXml(rows[0].xml);
+    const c = compraRows[0];
+    if (c) {
+      detalhe.recebimento = { operador: c.NomeOperador || null, data: c.DataConferencia || null, hora: c.HoraConferencia || null };
+      detalhe.movimentacao = c.Movimentacao || null;
+    }
+    res.json(detalhe);
+  } catch (err) {
+    console.error('[CD-NOTA-DETALHE-ERR]', err.message);
+    res.status(500).json({ error: err.message || 'Erro ao buscar detalhe da nota.' });
+  }
+});
+
+// ── API DE EXTRATO DO ITAÚ ───────────────────────────────────────────
+// Teste manual da integração direta com o Itaú (ver lib/itau-extrato.js).
+// Só admin, porque toca em credencial bancária real. Enquanto o ClientID
+// não estiver liberado pelo Itaú pro produto de Extrato, retorna o erro
+// deles mesmo (ex: "ClientID not enable") — é esperado até a liberação.
+app.get('/api/itau/extrato-teste', async (req, res) => {
+  if (!req.session.user || req.session.user.perfil !== 'admin') return res.status(403).json({ error: 'Só admin.' });
+  try {
+    const itauExtrato = require('./lib/itau-extrato');
+    const dataFim = req.query.fim || new Date().toISOString().slice(0, 10);
+    const dataIni = req.query.inicio || addDias(dataFim, -30);
+    const resultado = await itauExtrato.buscarExtrato({ dataInicio: dataIni, dataFim: dataFim });
+    res.json(resultado);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
