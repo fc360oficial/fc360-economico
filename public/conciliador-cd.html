@@ -1,0 +1,560 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="stylesheet" href="/design-system.css">
+<script src="/nav.js" defer></script>
+<title>Conciliador CD — Econômico Relatórios</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --bg:#EBEBE9; --surface:#FFFFFF; --surface-2:#E4E4E1;
+  --border:#DADAD6; --border-strong:#C9C9C4;
+  --ink:#0E1626; --ink-2:#4E5A72; --ink-3:#98A0B3;
+  --brand:#F5B800; --brand-ink:#6B4E00;
+  --green:#137A48; --green-bg:#E7F5EC;
+  --red:#C22F49; --red-bg:#FBEAED;
+  --font:'InterVar','Inter','Segoe UI',system-ui,-apple-system,sans-serif;
+}
+body{font-family:var(--font);background:var(--bg);color:var(--ink);min-height:100vh}
+.main{padding:24px}
+.page-hdr{margin-bottom:18px}
+.page-hdr h1{font-size:21px;font-weight:800;color:var(--ink)}
+.page-hdr p{font-size:12px;color:var(--ink-3);margin-top:2px}
+
+/* ENTRADA */
+.entrada{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:18px;box-shadow:0 1px 2px rgba(22,35,63,.04)}
+.entrada label{font-size:10px;color:var(--ink-3);font-weight:700;text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:6px}
+.entrada textarea{width:100%;min-height:120px;background:var(--bg);border:1px solid var(--border-strong);border-radius:8px;color:var(--ink);padding:10px 12px;font-size:12px;font-family:ui-monospace,Consolas,monospace;outline:none;resize:vertical}
+.entrada textarea:focus{border-color:var(--brand)}
+.entrada-foot{display:flex;align-items:center;justify-content:space-between;margin-top:10px;flex-wrap:wrap;gap:8px}
+.entrada-hint{font-size:11px;color:var(--ink-3)}
+.btn{border:none;border-radius:8px;padding:9px 18px;font-size:13px;font-weight:700;cursor:pointer;font-family:var(--font)}
+.btn-blue{background:var(--brand);color:var(--brand-ink)}.btn-blue:hover{background:#E5AC00}
+.btn-blue:disabled{opacity:.5;cursor:not-allowed}
+.btn-slate{background:var(--surface);color:var(--ink-2);border:1px solid var(--border-strong)}.btn-slate:hover{background:var(--surface-2)}
+.err{background:var(--red-bg);color:var(--red);border-radius:10px;padding:12px 16px;font-size:13px;font-weight:600}
+.spinner{width:22px;height:22px;border:3px solid var(--border-strong);border-top-color:var(--brand);border-radius:50%;animation:spin .7s linear infinite;margin:24px auto}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* KPI CARDS */
+.kpi-row{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+.kpi{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:12px 16px;min-width:150px;flex:1;box-shadow:0 1px 2px rgba(22,35,63,.04)}
+.kpi .v{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums}
+.kpi .l{font-size:10px;color:var(--ink-3);margin-top:2px;font-weight:700;text-transform:uppercase;letter-spacing:.4px}
+
+/* BUSCA */
+.busca-row{margin-bottom:14px}
+.busca-row input{width:100%;max-width:340px;background:var(--surface);border:1px solid var(--border-strong);border-radius:8px;color:var(--ink);padding:8px 12px;font-size:13px;outline:none;font-family:var(--font)}
+.busca-row input:focus{border-color:var(--brand)}
+
+/* LADO A LADO */
+.cols{display:grid;grid-template-columns:1.6fr 1fr;gap:16px;align-items:start}
+@media(max-width:900px){.cols{grid-template-columns:1fr}}
+
+.painel{background:var(--surface);border:1px solid var(--border);border-radius:12px;overflow:hidden;box-shadow:0 1px 2px rgba(22,35,63,.04)}
+.painel-hd{padding:12px 16px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:8px}
+.painel-hd h3{font-size:13px;font-weight:800;color:var(--ink)}
+.painel-hd .sub{font-size:10.5px;color:var(--ink-3)}
+
+/* TABELA DETALHE */
+.table-wrap{overflow-x:auto;max-height:640px;overflow-y:auto}
+table.t{width:100%;border-collapse:collapse;font-size:12px}
+table.t thead th{position:sticky;top:0;background:var(--surface-2);z-index:1}
+table.t th{padding:8px 12px;text-align:left;color:var(--ink-3);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;border-bottom:1px solid var(--border)}
+table.t td{padding:8px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+table.t th.r,table.t td.r{text-align:right}
+.fav{font-weight:600;color:var(--ink)}
+.hist{font-size:10.5px;color:var(--ink-3);margin-top:1px}
+.val{font-variant-numeric:tabular-nums;font-weight:700;color:var(--ink);white-space:nowrap}
+.data-cel{white-space:nowrap;color:var(--ink-2)}
+
+/* RESUMO POR DESTINATÁRIO */
+.resumo-list{max-height:640px;overflow-y:auto}
+.rp-row{display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1px solid var(--border);cursor:pointer;transition:background .12s}
+.rp-row:hover{background:var(--surface-2)}
+.rp-row.on{background:#FFF6D9}
+.rp-nome{flex:1;min-width:0;font-size:12px;font-weight:600;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.rp-nome small{display:block;font-size:10px;font-weight:600;color:var(--ink-3)}
+.rp-bar-wrap{width:70px;height:6px;background:var(--surface-2);border-radius:4px;overflow:hidden;flex-shrink:0}
+.rp-bar{height:100%;background:var(--brand);border-radius:4px}
+.rp-valor{font-size:12px;font-weight:700;color:var(--ink);font-variant-numeric:tabular-nums;white-space:nowrap;min-width:92px;text-align:right}
+.rp-total-row{display:flex;justify-content:space-between;padding:12px 16px;font-size:13px;font-weight:800;color:var(--ink);background:var(--surface-2)}
+
+/* NOTA CASADA COM ENTRADA (central.compras) */
+.loja-recebimento{margin-top:12px;padding-top:12px;border-top:1px dashed var(--border-strong);display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.loja-recebimento label{font-size:10px;color:var(--ink-3);font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin:0}
+.loja-recebimento input{width:80px;background:var(--bg);border:1px solid var(--border-strong);border-radius:8px;color:var(--ink);padding:7px 10px;font-size:13px;outline:none;font-family:var(--font);font-weight:700}
+.loja-recebimento input:focus{border-color:var(--brand)}
+.loja-recebimento .hint2{font-size:11px;color:var(--ink-3)}
+.nota-pill{display:inline-flex;align-items:center;gap:4px;font-size:10.5px;font-weight:700;border-radius:20px;padding:3px 9px;white-space:nowrap;margin-top:3px}
+.nota-ok{background:var(--green-bg);color:var(--green)}
+.nota-valor{background:#FBEDDD;color:#B45C00}
+.nota-manual{background:#E0EDFF;color:#1D4ED8}
+.nota-vazia{background:var(--surface-2);color:var(--ink-3);font-weight:600}
+.nota-linha{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.nota-ver-link{font-size:10.5px;color:var(--ink-3);text-decoration:underline;white-space:nowrap}
+.nota-ver-link:hover{color:var(--ink)}
+.nota-amb-tag{background:var(--red-bg);color:var(--red)}
+.nota-opcoes{margin-top:6px;display:flex;flex-direction:column;gap:4px;max-width:280px}
+.nota-nenhuma-link{display:inline-block;margin-top:6px;font-size:10.5px;color:var(--red);text-decoration:underline}
+.nota-opcao{border:1px solid var(--border-strong);border-radius:8px;padding:5px 8px;cursor:pointer;transition:background .12s,border-color .12s}
+.nota-opcao:hover{background:var(--amw,#FFF6D9);border-color:var(--brand)}
+.nota-opcao-nn{display:block;font-size:11px;font-weight:700;color:var(--ink)}
+.nota-opcao-forn{display:block;font-size:10px;color:var(--ink-3)}
+
+.filtro-nota-row{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.fn-btn{background:var(--surface);border:1px solid var(--border-strong);border-radius:10px;padding:6px 14px;font-size:12px;font-weight:700;cursor:pointer;font-family:var(--font);color:var(--ink-2);display:flex;align-items:baseline;flex-wrap:wrap;gap:5px;line-height:1.5}
+.fn-v{font-size:10px;font-weight:700;color:var(--ink-3);font-variant-numeric:tabular-nums}
+.fn-btn.on .fn-v{color:inherit;opacity:.75}
+.fn-btn:hover{background:var(--surface-2)}
+.fn-btn .n{font-variant-numeric:tabular-nums}
+.fn-btn.on{border-color:transparent}
+.fn-btn.on.fn-nome{background:var(--green-bg);color:var(--green)}
+.fn-btn.on.fn-valor{background:#FBEDDD;color:#B45C00}
+.fn-btn.on.fn-sem{background:var(--surface-2);color:var(--ink)}
+.fn-btn.on.fn-todos{background:#FFF6D9;color:var(--brand-ink)}
+.fn-btn.on.fn-ambiguo{background:var(--red-bg);color:var(--red)}
+.fn-btn.on.fn-manual{background:#E0EDFF;color:#1D4ED8}
+
+.print-header{display:none}
+.print-footer{display:none}
+
+@media print{
+  #dsnav,.entrada,.busca-row,.painel-hd .btn,.page-hdr,.kpi-row,.filtro-nota-row{display:none!important}
+  body.dsnav-pad{margin-left:0!important;padding-top:0!important}
+  .cols{grid-template-columns:1fr!important;display:block!important}
+  /* Sem break-inside:avoid aqui de propósito — a tabela detalhada costuma
+     ter dezenas/centenas de linhas, e "não quebrar" um bloco maior que uma
+     página faz o Chrome empurrar o painel inteiro pra página seguinte,
+     deixando a primeira página em branco (só o cabeçalho). */
+  .painel{box-shadow:none;border:1px solid #999;margin-bottom:12px}
+  table.t tr{break-inside:avoid}
+  .table-wrap{max-height:none!important;overflow:visible!important}
+  table.t thead th{position:static}
+  .resumo-list{max-height:none!important;overflow:visible!important}
+  .painel-hd .sub{display:none!important}
+  .print-header{
+    display:flex!important;align-items:center;gap:14px;
+    margin-bottom:14px;padding-bottom:12px;border-bottom:3px solid #F5B800;
+  }
+  .print-header img{height:36px;width:auto}
+  .print-header-txt h1{font-size:17px;font-weight:800;color:#0E1626;letter-spacing:-.3px}
+  .print-header-txt p{font-size:11px;color:#4E5A72;margin-top:2px}
+  .print-footer{display:block!important;margin-top:16px;padding-top:8px;border-top:1px solid #DADAD6;font-size:10px;color:#4E5A72;text-align:right}
+  /* com fornecedor filtrado, a impressão mostra só a linha dele no resumo */
+  body.cd-print-filtrado .rp-row:not(.on){display:none!important}
+  body.cd-print-filtrado .rp-total-row{display:none!important}
+}
+</style>
+</head>
+<body class="ds">
+
+<div class="main">
+  <div class="page-hdr">
+    <h1>Conciliador CD</h1>
+    <p>Importe o extrato bancário do CD e veja as saídas com o destinatário de cada uma, lado a lado, e o total pago por pessoa/empresa</p>
+  </div>
+
+  <div class="entrada">
+    <label>Extrato do CD (.ofx recomendado — também aceita TXT do Itaú: data;histórico;valor;)</label>
+    <textarea id="txt-extrato" placeholder="Cole aqui o conteúdo do extrato, ou use Importar Arquivo"></textarea>
+    <div class="entrada-foot">
+      <span class="entrada-hint">Não cruza com contas a pagar do ERP — só organiza e soma as saídas do próprio extrato. Só as linhas com valor negativo (saídas) são consideradas.</span>
+      <div style="display:flex;gap:8px">
+        <input type="file" id="file-extrato" accept=".txt,.ofx" style="display:none" onchange="importarArquivo(this)">
+        <button class="btn btn-slate" onclick="document.getElementById('file-extrato').click()">Importar Arquivo</button>
+        <button class="btn btn-slate" onclick="document.getElementById('txt-extrato').value=''">Limpar</button>
+        <button class="btn btn-blue" id="btn-processar" onclick="processar()">Processar Extrato</button>
+      </div>
+    </div>
+    <div class="loja-recebimento">
+      <label>Conferir com entrada de notas da loja</label>
+      <input type="number" id="loja-recebimento" placeholder="Ex: 10" min="1" value="10">
+      <span class="hint2">Opcional — cruza cada saída com as notas fechadas (NFe) dessa loja no ERP, pra ver se o pagamento corresponde a uma mercadoria que realmente entrou.</span>
+    </div>
+  </div>
+
+  <div id="resultado"></div>
+</div>
+
+<script>
+let dados = null;
+let favorecidoAtivo = '';
+let busca = '';
+let filtroNota = ''; // '' | 'nome' | 'valor' | 'sem'
+let itensAtuaisRef = [];
+
+function fmtMoeda(v) {
+  return 'R$ ' + Number(v).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function fmtData(iso) {
+  if (!iso) return '';
+  const [y, m, d] = iso.split('-');
+  return `${d}/${m}/${y}`;
+}
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
+}
+
+function importarArquivo(input) {
+  const file = input.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => { document.getElementById('txt-extrato').value = e.target.result; };
+  // extratos do Itaú costumam vir em ISO-8859-1/Windows-1252 (acentos quebram em UTF-8)
+  reader.readAsText(file, 'iso-8859-1');
+  input.value = '';
+}
+
+async function processar() {
+  const texto = document.getElementById('txt-extrato').value;
+  const lojaRecebimento = document.getElementById('loja-recebimento').value;
+  const btn = document.getElementById('btn-processar');
+  const cont = document.getElementById('resultado');
+  btn.disabled = true;
+  cont.innerHTML = '<div class="spinner"></div>';
+  try {
+    const r = await fetch('/api/conciliador-cd/processar', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ texto, lojaRecebimento: lojaRecebimento || null })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Erro ao processar');
+    dados = j;
+    favorecidoAtivo = '';
+    busca = '';
+    render();
+  } catch (e) {
+    cont.innerHTML = `<div class="err">${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function statusNota(it) {
+  if (!it.nota) return (it.notaCandidatos && it.notaCandidatos.length) ? 'ambiguo' : 'sem';
+  if (it.nota.confianca === 'manual') return 'manual';
+  return it.nota.confianca === 'nome' ? 'nome' : 'valor';
+}
+
+function itensFiltrados() {
+  if (!dados) return [];
+  return dados.itens.filter(it => {
+    if (favorecidoAtivo && (it.favorecido || '(sem identificação)') !== favorecidoAtivo) return false;
+    if (busca && !(it.favorecido || '').toUpperCase().includes(busca.toUpperCase()) && !(it.historico || '').toUpperCase().includes(busca.toUpperCase())) return false;
+    if (filtroNota && statusNota(it) !== filtroNota) return false;
+    return true;
+  }).sort((a, b) => b.data.localeCompare(a.data) || b.valor - a.valor);
+}
+
+function toggleFavorecido(nome) {
+  favorecidoAtivo = favorecidoAtivo === nome ? '' : nome;
+  render();
+}
+
+function aplicarBusca(v) {
+  busca = v;
+  render();
+}
+
+function aplicarFiltroNota(v) {
+  filtroNota = filtroNota === v ? '' : v;
+  render();
+}
+
+function notaCelHtml(it, idx) {
+  if (!it.nota && it.notaCandidatos && it.notaCandidatos.length) {
+    // Ambíguo: várias notas com o mesmo valor, nome não confere com nenhuma
+    // — mostra as opções pra confirmar manualmente qual é a certa.
+    const opcoes = it.notaCandidatos.map((c, cidx) => `
+      <div class="nota-opcao" onclick="confirmarNota(${idx}, ${cidx})">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px">
+          <span class="nota-opcao-nn">Nota ${esc(c.nNota)}</span>
+          ${c.chave ? `<a href="#" class="nota-ver-link" onclick="event.stopPropagation();verNota('${esc(c.chave)}');return false">ver nota</a>` : ''}
+        </div>
+        <span class="nota-opcao-forn">${esc(c.fornecedor)} · emissão ${fmtData(c.dataEmissao)} · recebimento ${fmtData(c.dataRecebimento)}</span>
+      </div>`).join('');
+    return `<div class="nota-ambigua">
+      <span class="nota-pill nota-amb-tag">${it.notaCandidatos.length} nota${it.notaCandidatos.length > 1 ? 's' : ''} com esse valor — qual é?</span>
+      <div class="nota-opcoes">${opcoes}</div>
+      <a href="#" class="nota-nenhuma-link" onclick="rejeitarNota(${idx});return false">nenhuma dessas é a nota certa</a>
+    </div>`;
+  }
+  if (!it.nota) return `<span class="nota-pill nota-vazia">${it.semNotaConfirmado ? 'Revisado — nenhuma nota' : 'Não encontrada na loja'}</span>`;
+  const classe = it.nota.confianca === 'manual' ? 'nota-manual' : it.nota.confianca === 'nome' ? 'nota-ok' : 'nota-valor';
+  const rotulo = it.nota.confianca === 'valor' ? 'Nota (valor único)' : 'Nota';
+  let html = `<div class="nota-linha">
+      <span class="nota-pill ${classe}">${rotulo} ${esc(it.nota.nNota)}</span>
+      ${it.nota.chave ? `<a href="#" class="nota-ver-link" onclick="verNota('${esc(it.nota.chave)}');return false">ver nota</a>` : ''}
+      ${it.nota.confianca === 'valor' ? `<a href="#" class="nota-ver-link" onclick="aprovarValor(${idx});return false">é essa, aprovar</a>` : ''}
+    </div>` +
+    `<div class="hist">emissão ${fmtData(it.nota.dataEmissao)} · recebimento ${fmtData(it.nota.dataRecebimento)} · ${esc(it.nota.fornecedor)}</div>`;
+  if (it.notaCandidatos && it.notaCandidatos.length) {
+    html += `<div class="hist">+${it.notaCandidatos.length} outra${it.notaCandidatos.length > 1 ? 's' : ''} nota${it.notaCandidatos.length > 1 ? 's' : ''} do mesmo fornecedor com esse valor</div>`;
+  }
+  return html;
+}
+
+async function confirmarNota(idx, cidx) {
+  const it = itensAtuaisRef[idx];
+  const escolha = it && it.notaCandidatos && it.notaCandidatos[cidx];
+  if (!it || !escolha) return;
+  try {
+    const r = await fetch('/api/conciliador-cd/confirmar-nota', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        saida: { data: it.data, valor: it.valor, historico: it.historico },
+        escolha
+      })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Erro ao confirmar nota');
+    it.nota = { ...escolha, confianca: 'manual' };
+    it.notaCandidatos = [];
+    render();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function aprovarValor(idx) {
+  const it = itensAtuaisRef[idx];
+  const escolha = it && it.nota;
+  if (!it || !escolha) return;
+  try {
+    const r = await fetch('/api/conciliador-cd/confirmar-nota', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        saida: { data: it.data, valor: it.valor, historico: it.historico },
+        escolha
+      })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Erro ao aprovar nota');
+    it.nota = { ...escolha, confianca: 'manual' };
+    render();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+async function rejeitarNota(idx) {
+  const it = itensAtuaisRef[idx];
+  if (!it) return;
+  if (!confirm('Confirma que nenhuma das notas candidatas é essa saída? Ela vai ficar marcada como "Revisado — nenhuma nota" e não volta a aparecer como ambígua.')) return;
+  try {
+    const r = await fetch('/api/conciliador-cd/confirmar-nota', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        saida: { data: it.data, valor: it.valor, historico: it.historico },
+        semNota: true
+      })
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || 'Erro ao marcar como não encontrada');
+    it.nota = null;
+    it.notaCandidatos = [];
+    it.semNotaConfirmado = true;
+    render();
+  } catch (e) {
+    alert(e.message);
+  }
+}
+
+function fmtDataHora(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d)) return iso;
+  return d.toLocaleString('pt-BR');
+}
+function fmtCnpj(v) {
+  const s = (v || '').replace(/\D/g, '');
+  if (s.length !== 14) return v || '';
+  return `${s.slice(0,2)}.${s.slice(2,5)}.${s.slice(5,8)}/${s.slice(8,12)}-${s.slice(12)}`;
+}
+
+async function verNota(chave) {
+  const w = window.open('', '_blank');
+  if (!w) { alert('O navegador bloqueou a janela da nota — permita pop-ups pra esse site.'); return; }
+  w.document.write('<p style="font-family:sans-serif;padding:20px">Carregando nota...</p>');
+  try {
+    const r = await fetch('/api/conciliador-cd/nota-detalhe?chave=' + encodeURIComponent(chave));
+    const n = await r.json();
+    if (!r.ok) throw new Error(n.error || 'Erro ao buscar nota');
+
+    const linhasItens = n.itens.map(it => `
+      <tr>
+        <td>${esc(it.item)}</td>
+        <td>${esc(it.descricao)}</td>
+        <td class="r">${esc(it.qtd)} ${esc(it.unidade)}</td>
+        <td class="r">${fmtMoeda(it.valorUnit)}</td>
+        <td class="r">${fmtMoeda(it.valorTotal)}</td>
+      </tr>`).join('');
+
+    const linhasDup = n.duplicatas.map(d => `
+      <tr><td>${esc(d.numero)}</td><td>${fmtData(d.vencimento)}</td><td class="r">${fmtMoeda(d.valor)}</td></tr>`).join('');
+
+    w.document.open();
+    w.document.write(`<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8">
+      <title>NFe ${esc(n.numero)} — ${esc(n.emitente.nome)}</title>
+      <style>
+        *{box-sizing:border-box;font-family:'Segoe UI',Arial,sans-serif}
+        body{padding:24px;color:#0E1626;max-width:800px;margin:0 auto}
+        .header{display:flex;align-items:center;gap:14px;border-bottom:3px solid #F5B800;padding-bottom:12px;margin-bottom:16px}
+        .header img{height:36px}
+        .header h1{font-size:17px;font-weight:800}
+        .header p{font-size:11px;color:#4E5A72;margin-top:2px}
+        .sec{font-size:10px;font-weight:800;letter-spacing:.6px;text-transform:uppercase;color:#98A0B3;margin:16px 0 6px}
+        .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+        .box{border:1px solid #DADAD6;border-radius:8px;padding:10px 12px;font-size:12.5px}
+        .box b{display:block;font-size:13px;margin-bottom:2px}
+        table{width:100%;border-collapse:collapse;font-size:12px;margin-top:4px}
+        th{background:#F5F5F3;text-align:left;padding:6px 8px;font-size:10px;text-transform:uppercase;color:#4E5A72;border:1px solid #DADAD6}
+        td{padding:6px 8px;border:1px solid #DADAD6}
+        th.r,td.r{text-align:right}
+        .total-row{font-weight:800;background:#F5F5F3}
+        .protocolo{margin-top:16px;font-size:11px;color:#137A48;background:#E7F5EC;border-radius:8px;padding:10px 12px}
+        .chave{font-family:monospace;font-size:11px;word-break:break-all;color:#4E5A72;margin-top:8px}
+        @media print{button{display:none!important}}
+      </style></head><body>
+      <div class="header">
+        <img src="/logo.png" alt="Econômico">
+        <div><h1>NFe ${esc(n.numero)} · Série ${esc(n.serie)}${n.movimentacao ? ` <span style="font-size:11px;font-weight:700;color:#B45C00;background:#FBEDDD;border-radius:10px;padding:2px 8px;vertical-align:middle">${esc(n.movimentacao)}</span>` : ''}</h1><p>${esc(n.naturezaOperacao)} · Emitida em ${fmtDataHora(n.dataEmissao)}</p></div>
+      </div>
+      <div class="grid2">
+        <div class="box"><b>${esc(n.emitente.nome)}</b>CNPJ ${fmtCnpj(n.emitente.cnpj)} · IE ${esc(n.emitente.ie)}</div>
+        <div class="box"><b>${esc(n.destinatario.nome)}</b>CNPJ ${fmtCnpj(n.destinatario.cnpj)}</div>
+      </div>
+      <div class="sec">Itens</div>
+      <table><thead><tr><th>#</th><th>Descrição</th><th class="r">Qtd</th><th class="r">Vl. Unit.</th><th class="r">Vl. Total</th></tr></thead>
+      <tbody>${linhasItens}
+        <tr><td colspan="4" class="r">Total dos produtos</td><td class="r">${fmtMoeda(n.valorProdutos)}</td></tr>
+        ${Number(n.desconto) > 0 ? `<tr><td colspan="4" class="r">Desconto</td><td class="r">- ${fmtMoeda(n.desconto)}</td></tr>` : ''}
+        ${Number(n.frete) > 0 ? `<tr><td colspan="4" class="r">Frete</td><td class="r">${fmtMoeda(n.frete)}</td></tr>` : ''}
+        ${Number(n.outrasDespesas) > 0 ? `<tr><td colspan="4" class="r">Outras despesas</td><td class="r">${fmtMoeda(n.outrasDespesas)}</td></tr>` : ''}
+        <tr class="total-row"><td colspan="4" class="r">Total da nota</td><td class="r">${fmtMoeda(n.valorTotal)}</td></tr>
+      </tbody></table>
+      ${n.duplicatas.length ? `<div class="sec">Duplicatas / Vencimentos</div>
+      <table><thead><tr><th>Parcela</th><th>Vencimento</th><th class="r">Valor</th></tr></thead><tbody>${linhasDup}</tbody></table>` : ''}
+      ${n.recebimento && n.recebimento.operador ? `<div class="box" style="margin-top:16px">
+        <b>Recebimento no ERP</b>
+        ${n.recebimento.operador ? `Processado por <b>${esc(n.recebimento.operador)}</b>` : 'Operador não identificado'}
+      </div>` : ''}
+      <div class="protocolo">
+        <b>${esc(n.protocolo.status)}</b> — Protocolo ${esc(n.protocolo.numero)} em ${fmtDataHora(n.protocolo.dataRecebimento)}
+        <div class="chave">Chave de acesso: ${esc(n.protocolo.chave)}</div>
+      </div>
+      <button onclick="window.print()" style="margin-top:16px;padding:8px 16px;border-radius:8px;border:none;background:#F5B800;color:#6B4E00;font-weight:700;cursor:pointer">Imprimir / PDF</button>
+      </body></html>`);
+    w.document.close();
+  } catch (e) {
+    w.document.write(`<p style="font-family:sans-serif;padding:20px;color:#C22F49">${esc(e.message)}</p>`);
+  }
+}
+
+function render() {
+  const cont = document.getElementById('resultado');
+  if (!dados) { cont.innerHTML = ''; return; }
+
+  const itens = itensFiltrados();
+  itensAtuaisRef = itens;
+  const qtdeDestinatarios = dados.totais.length;
+  document.body.classList.toggle('cd-print-filtrado', !!favorecidoAtivo);
+
+  const kpis = `<div class="kpi-row">
+    <div class="kpi"><div class="v">${fmtMoeda(dados.totalValor)}</div><div class="l">Total de saídas</div></div>
+    <div class="kpi"><div class="v">${dados.total}</div><div class="l">Lançamentos</div></div>
+    <div class="kpi"><div class="v">${qtdeDestinatarios}</div><div class="l">Destinatários</div></div>
+    ${dados.lojaRecebimento ? `<div class="kpi"><div class="v">${dados.itens.filter(i => i.nota).length}</div><div class="l">Com nota na loja ${dados.lojaRecebimento}</div></div>` : ''}
+  </div>`;
+
+  const busca_ = `<div class="busca-row"><input type="text" placeholder="Buscar por destinatário ou histórico..." value="${esc(busca)}" oninput="aplicarBusca(this.value)"></div>`;
+
+  const temLoja = !!dados.lojaRecebimento;
+
+  let filtroNota_ = '';
+  if (temLoja) {
+    const cont_ = { nome: { n: 0, v: 0 }, valor: { n: 0, v: 0 }, manual: { n: 0, v: 0 }, ambiguo: { n: 0, v: 0 }, sem: { n: 0, v: 0 } };
+    let totalGeralN = 0, totalGeralV = 0;
+    dados.itens.forEach(it => {
+      const s = statusNota(it);
+      cont_[s].n++; cont_[s].v += it.valor;
+      totalGeralN++; totalGeralV += it.valor;
+    });
+    const btn = (v, cls, label, n, valor) => `<button class="fn-btn ${cls}${filtroNota === v ? ' on' : ''}" onclick="aplicarFiltroNota('${v}')">${label} <span class="n">${n}</span><span class="fn-v">${fmtMoeda(valor)}</span></button>`;
+    filtroNota_ = `<div class="filtro-nota-row">
+      ${btn('', 'fn-todos', 'Todos', totalGeralN, totalGeralV)}
+      ${btn('nome', 'fn-nome', 'Conciliado', cont_.nome.n, cont_.nome.v)}
+      ${btn('manual', 'fn-manual', 'Conciliado avulso', cont_.manual.n, cont_.manual.v)}
+      ${btn('valor', 'fn-valor', 'Valor único', cont_.valor.n, cont_.valor.v)}
+      ${btn('ambiguo', 'fn-ambiguo', 'Revisar', cont_.ambiguo.n, cont_.ambiguo.v)}
+      ${btn('sem', 'fn-sem', 'Não encontrada', cont_.sem.n, cont_.sem.v)}
+    </div>`;
+  }
+
+  const linhasDetalhe = itens.map((it, idx) => `
+    <tr>
+      <td class="data-cel">${fmtData(it.data)}</td>
+      <td class="r val">${fmtMoeda(it.valor)}</td>
+      <td>
+        <div class="fav">${esc(it.favorecido || '(sem identificação)')}</div>
+        <div class="hist">${esc(it.historico)}</div>
+      </td>
+      ${temLoja ? `<td>${notaCelHtml(it, idx)}</td>` : ''}
+    </tr>`).join('');
+
+  const detalhe = `<div class="painel">
+    <div class="painel-hd">
+      <h3>Saídas detalhadas</h3>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div class="sub">${itens.length} de ${dados.total}${favorecidoAtivo ? ' · filtrado por ' + esc(favorecidoAtivo) : ''}</div>
+        <button class="btn btn-slate" onclick="window.print()">Imprimir / PDF</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="t">
+        <thead><tr><th>Data</th><th class="r">Valor</th><th>Para quem foi</th>${temLoja ? `<th>Nota (loja ${dados.lojaRecebimento})</th>` : ''}</tr></thead>
+        <tbody>${linhasDetalhe || `<tr><td colspan="${temLoja ? 4 : 3}" style="padding:20px;text-align:center;color:var(--ink-3)">Nenhuma saída encontrada</td></tr>`}</tbody>
+      </table>
+    </div>
+  </div>`;
+
+  const maiorTotal = dados.totais.length ? dados.totais[0].total : 1;
+  const linhasResumo = dados.totais.map(t => {
+    const pct = Math.max((t.total / maiorTotal) * 100, 2);
+    const on = favorecidoAtivo === t.favorecido ? ' on' : '';
+    return `<div class="rp-row${on}" onclick="toggleFavorecido('${esc(t.favorecido).replace(/'/g, "\\'")}')">
+      <div class="rp-nome">${esc(t.favorecido)}<small>${t.qtde} lançamento${t.qtde > 1 ? 's' : ''}</small></div>
+      <div class="rp-bar-wrap"><div class="rp-bar" style="width:${pct.toFixed(1)}%"></div></div>
+      <div class="rp-valor">${fmtMoeda(t.total)}</div>
+    </div>`;
+  }).join('');
+
+  const resumo = `<div class="painel">
+    <div class="painel-hd">
+      <h3>Total por destinatário</h3>
+      <div class="sub">Clique pra filtrar ao lado</div>
+    </div>
+    <div class="resumo-list">${linhasResumo}</div>
+    <div class="rp-total-row"><span>Total geral</span><span>${fmtMoeda(dados.totalValor)}</span></div>
+  </div>`;
+
+  const printHeader = `<div class="print-header">
+    <img src="/logo.png" alt="Econômico">
+    <div class="print-header-txt">
+      <h1>Econômico Relatórios</h1>
+      <p>Conciliador CD · Saídas do extrato${favorecidoAtivo ? ' · ' + esc(favorecidoAtivo) : ''}</p>
+    </div>
+  </div>`;
+  const printFooter = `<div class="print-footer">Emitido em ${new Date().toLocaleString('pt-BR')}</div>`;
+
+  cont.innerHTML = printHeader + kpis + filtroNota_ + busca_ + `<div class="cols">${detalhe}${resumo}</div>` + printFooter;
+}
+</script>
+</body>
+</html>
