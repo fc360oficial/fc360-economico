@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '304';
+var BUILD = '305';
 (function() {
   var vEl = document.getElementById('sb-versao');
   if (vEl) vEl.textContent = 'v' + BUILD;
@@ -1006,18 +1006,23 @@ var CAPA_MODULOS = [
 
 // Estado de um card da capa, nesta ordem de prioridade:
 // 1. não desenvolvido → sempre "em_breve" (nunca oculta, é vitrine)
-// 2. papel sem acesso → "oculto" (nem aparece)
+// 2. papel sem acesso → "bloqueado" (cinza, mas continua visível — todo perfil
+//    precisa enxergar que o módulo existe, mesmo sem poder abrir; pedido do Tiago)
 // 3. desenvolvido + papel ok, mas módulo desligado no plano do cliente → "cadeado"
 // 4. caso contrário → "vivo"
 function _capaEstado(mod) {
   if (!mod.desenvolvido) return 'em_breve';
-  if (!mod.roleOk()) return 'oculto';
+  if (!mod.roleOk()) return 'bloqueado';
   if (!_moduloAtivo(mod.moduloChave)) return 'cadeado';
   return 'vivo';
 }
 
 function _avisoEmBreve(nomeModulo) {
   showToast('🚧 ' + nomeModulo + ' está em desenvolvimento. Em breve na sua loja!');
+}
+
+function _avisoSemPermissao(nomeModulo) {
+  showToast('🔒 ' + nomeModulo + ' não está disponível para o seu perfil.');
 }
 
 function abrirModalUpgrade(nomeModulo) {
@@ -1044,10 +1049,12 @@ function renderCapa() {
     if (estado === 'oculto') return '';
     var cls = 'capa-card' + (estado==='vivo' ? '' : ' capa-card-inativo');
     var pill = estado==='em_breve' ? '<span class="capa-pill">Em breve</span>'
-             : estado==='cadeado' ? '<span class="capa-pill capa-pill-cadeado">🔒</span>' : '';
+             : estado==='cadeado' ? '<span class="capa-pill capa-pill-cadeado">🔒</span>'
+             : estado==='bloqueado' ? '<span class="capa-pill">🔒 Restrito</span>' : '';
     var labelEsc = mod.label.replace(/'/g, "\\'");
     var onclick = estado==='vivo' ? "nav('"+mod.page()+"',this)"
                 : estado==='cadeado' ? "abrirModalUpgrade('"+labelEsc+"')"
+                : estado==='bloqueado' ? "_avisoSemPermissao('"+labelEsc+"')"
                 : "_avisoEmBreve('"+labelEsc+"')";
     return '<div class="'+cls+'" onclick="'+onclick+'">'
       + '<div class="capa-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75">'+mod.icone+'</svg></div>'
@@ -1060,6 +1067,30 @@ function renderCapa() {
     + '<div class="capa-card-label">Saída</div>'
     + '</div>';
   grid.innerHTML = html;
+  _ajustarAlturaCapa();
+}
+
+// Calcula a altura real disponível (topbar + faixa de impersonar, se existir + padding do
+// .content) e divide entre as 4 linhas da capa, pra caber sem rolagem em qualquer device —
+// em vez de valores fixos em px, que quebravam quando a faixa de superadmin aparecia.
+function _ajustarAlturaCapa() {
+  var grid = document.getElementById('capa-grid');
+  if (!grid || window.innerWidth > 768) { if (grid) grid.style.height = ''; document.body.style.removeProperty('overflow'); return; }
+  var topbar = document.querySelector('.topbar');
+  var faixa = document.getElementById('impersonar-faixa');
+  var usado = (topbar ? topbar.offsetHeight : 52) + (faixa ? faixa.offsetHeight : 0) + 28;
+  var h = window.innerHeight - usado;
+  grid.style.height = h > 320 ? h + 'px' : '';
+  // Trava o scroll do body enquanto a capa cabe inteira — a faixa de impersonar usa
+  // position:fixed, e isso faz o browser contar a altura dela 2x no scrollHeight
+  // (padding de compensação + o próprio fixed), sobrando ~faixa-h de scroll fantasma
+  // mesmo com todos os 12 cards já visíveis. Sem isso, dava pra arrastar um scroll vazio.
+  if (h > 320) document.body.style.setProperty('overflow', 'hidden', 'important');
+  else document.body.style.removeProperty('overflow');
+}
+if (!window._capaResizeBound) {
+  window._capaResizeBound = true;
+  window.addEventListener('resize', function(){ if (document.getElementById('panel-capa') && document.getElementById('panel-capa').classList.contains('active')) _ajustarAlturaCapa(); });
 }
 
 function carregarClienteConfig(cb) {
@@ -1792,6 +1823,7 @@ var PAGE_TITLES = {
 };
 
 function nav(page, el) {
+  if (page !== 'capa') document.body.style.removeProperty('overflow');
   _atualizarBadgeNotificacoes();
   sessionStorage.setItem('eco_last_page', page);
   localStorage.setItem('eco_last_page', page); // fallback para PWA fechado/reaberto
@@ -7614,6 +7646,8 @@ function sairImpersonar() {
   var faixa = document.getElementById('impersonar-faixa');
   if (faixa) faixa.remove();
   document.body.style.paddingTop = '';
+  document.documentElement.style.setProperty('--faixa-h', '0px');
+  _ajustarAlturaCapa();
   finalizarLogin(original.currentUser);
 }
 
@@ -7627,6 +7661,8 @@ function _mostrarFaixaImpersonar(nomeCliente) {
     + '<button onclick="sairImpersonar()" style="padding:5px 14px;background:#f1c40f;color:#1a1a1a;border:none;border-radius:8px;font-weight:700;cursor:pointer;font-family:inherit">← Voltar ao Painel</button>';
   document.body.appendChild(faixa);
   document.body.style.paddingTop = faixa.offsetHeight + 'px';
+  document.documentElement.style.setProperty('--faixa-h', faixa.offsetHeight + 'px');
+  _ajustarAlturaCapa();
 }
 
 function renderPainelClientes() {
