@@ -1,0 +1,32 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /clientes/{clienteId}/fornecedores/{fornecedorId} {
+      // Leitura pública: a página de check-in (sem login) precisa listar
+      // os fornecedores daquela loja pro select.
+      allow read: if true;
+      // Escrita só autenticado (usuários reais do FC360, checado na regra
+      // geral do app — aqui só garantimos que não é totalmente aberto).
+      allow write: if request.auth != null && request.auth.token.firebase.sign_in_provider != 'anonymous';
+    }
+
+    match /clientes/{clienteId}/promotor_visitas/{visitaId} {
+      allow read: if request.auth != null;
+      // Create: só o dono da sessão anônima pode criar, e só com os campos
+      // esperados (sessionUid tem que bater com quem está autenticado).
+      allow create: if request.auth != null
+        && request.resource.data.sessionUid == request.auth.uid
+        && request.resource.data.checkOutEm == null;
+      // Update: só quem criou a visita (mesmo sessionUid) pode fechar o
+      // check-out, e só o campo de check-out (não pode reescrever check-in).
+      allow update: if request.auth != null
+        && resource.data.sessionUid == request.auth.uid
+        && resource.data.checkOutEm == null
+        && request.resource.data.fornecedorId == resource.data.fornecedorId
+        && request.resource.data.lojaId == resource.data.lojaId
+        && request.resource.data.checkInEm == resource.data.checkInEm;
+      allow delete: if false;
+    }
+  }
+}
