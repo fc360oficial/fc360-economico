@@ -80,6 +80,69 @@ function carregarLoja() {
   });
 }
 
+function renderFormCheckin() {
+  var card = document.getElementById('card');
+  var opcoes = fornecedoresDaLoja.map(function(f) {
+    return '<option value="' + f.id + '">' + f.nome + '</option>';
+  }).join('');
+  if (!opcoes) {
+    card.innerHTML += '<div class="msg msg-err" style="display:block">Nenhum fornecedor cadastrado pra essa loja ainda. Fale com o administrador.</div>';
+    return;
+  }
+  card.innerHTML +=
+    '<label>Fornecedor</label>' +
+    '<select id="ci-fornecedor"><option value="">Selecione...</option>' + opcoes + '</select>' +
+    '<label>Seu nome</label>' +
+    '<input id="ci-nome" placeholder="Nome completo">' +
+    '<div class="msg msg-err" id="ci-erro"></div>' +
+    '<button id="ci-btn" onclick="fazerCheckin()">Registrar entrada</button>';
+}
+
+function fazerCheckin() {
+  var fornecedorId = document.getElementById('ci-fornecedor').value;
+  var nome = document.getElementById('ci-nome').value.trim();
+  var erroEl = document.getElementById('ci-erro');
+  erroEl.style.display = 'none';
+  if (!fornecedorId) { erroEl.textContent = 'Selecione o fornecedor.'; erroEl.style.display = 'block'; return; }
+  if (!nome) { erroEl.textContent = 'Informe seu nome.'; erroEl.style.display = 'block'; return; }
+
+  var fornecedor = fornecedoresDaLoja.filter(function(f){ return f.id === fornecedorId; })[0];
+  var btn = document.getElementById('ci-btn');
+  btn.disabled = true; btn.textContent = 'Registrando...';
+
+  function gravar(geo) {
+    db.collection('clientes').doc(CLIENTE_ID).collection('promotor_visitas').add({
+      fornecedorId: fornecedorId,
+      fornecedorNome: fornecedor.nome,
+      lojaId: LOJA_ID,
+      lojaNome: document.getElementById('loja-sub').textContent.replace('Loja: ', ''),
+      promotorNome: nome,
+      sessionUid: currentUid,
+      checkInEm: firebase.firestore.FieldValue.serverTimestamp(),
+      checkInGeo: geo,
+      checkOutEm: null,
+      checkOutGeo: null
+    }).then(function() {
+      verificarVisitaAberta();
+    }).catch(function(e) {
+      btn.disabled = false; btn.textContent = 'Registrar entrada';
+      erroEl.textContent = 'Erro ao registrar: ' + e.message;
+      erroEl.style.display = 'block';
+    });
+  }
+
+  if (!navigator.geolocation) { gravar(null); return; }
+  navigator.geolocation.getCurrentPosition(
+    function(pos) { gravar({lat: pos.coords.latitude, lng: pos.coords.longitude}); },
+    function() { gravar(null); },
+    {timeout: 5000}
+  );
+}
+
+function verificarVisitaAberta() {
+  renderFormCheckin();
+}
+
 iniciar();
 </script>
 </body>
