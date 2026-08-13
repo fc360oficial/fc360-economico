@@ -86,10 +86,10 @@ function renderFormCheckin() {
     return '<option value="' + f.id + '">' + f.nome + '</option>';
   }).join('');
   if (!opcoes) {
-    card.innerHTML += '<div class="msg msg-err" style="display:block">Nenhum fornecedor cadastrado pra essa loja ainda. Fale com o administrador.</div>';
+    card.innerHTML = '<div class="msg msg-err" style="display:block">Nenhum fornecedor cadastrado pra essa loja ainda. Fale com o administrador.</div>';
     return;
   }
-  card.innerHTML +=
+  card.innerHTML =
     '<label>Fornecedor</label>' +
     '<select id="ci-fornecedor"><option value="">Selecione...</option>' + opcoes + '</select>' +
     '<label>Seu nome</label>' +
