@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>Teste Bluetooth K329</title>
+<style>
+body{font-family:sans-serif;padding:20px;max-width:600px;margin:0 auto}
+button{padding:12px 20px;font-size:15px;margin:6px 6px 6px 0;cursor:pointer}
+#log{background:#111;color:#0f0;padding:12px;border-radius:8px;font-family:monospace;font-size:12px;white-space:pre-wrap;min-height:200px;margin-top:16px}
+</style>
+</head>
+<body>
+<h2>Teste Bluetooth — Urovo K329</h2>
+<p>Precisa ser aberto em Chrome/Android (Web Bluetooth não existe em iOS Safari).</p>
+<button onclick="conectar()">1. Conectar no K329</button>
+<button onclick="enviarTeste()">2. Enviar comando de teste</button>
+<div id="log"></div>
+
+<script>
+// UUIDs candidatos: o trio "ISSC transparent UART" é usado por uma faixa
+// grande de impressoras Bluetooth baratas de etiqueta/recibo (o mesmo
+// padrão usado por bibliotecas tipo flutter_blue_thermal_printer). Não há
+// garantia de que o K329 use exatamente este — por isso o log abaixo lista
+// TODOS os serviços/características encontrados, não só esses.
+var CANDIDATOS = [
+  '49535343-fe7d-4ae5-8fa9-9fafd205e455', // ISSC transparent UART (comum em impressoras BLE baratas)
+  '0000ffe0-0000-1000-8000-00805f9b34fb', // HM-10 style serial
+  '000018f0-0000-1000-8000-00805f9b34fb', // outro padrão comum de impressora térmica BLE
+  'generic_access'
+];
+var device, gattServer, writeChar;
+
+function logar(msg) {
+  document.getElementById('log').textContent += msg + '\n';
+}
+
+function conectar() {
+  navigator.bluetooth.requestDevice({
+    acceptAllDevices: true,
+    optionalServices: CANDIDATOS
+  }).then(function(d) {
+    device = d;
+    logar('Dispositivo selecionado: ' + d.name + ' (' + d.id + ')');
+    return d.gatt.connect();
+  }).then(function(server) {
+    gattServer = server;
+    logar('GATT conectado. Buscando serviços...');
+    return server.getPrimaryServices();
+  }).then(function(services) {
+    logar('Serviços encontrados: ' + services.length);
+    services.forEach(function(svc) {
+      logar('  Serviço: ' + svc.uuid);
+      svc.getCharacteristics().then(function(chars) {
+        chars.forEach(function(c) {
+          var props = Object.keys(c.properties).filter(function(k){return c.properties[k];}).join(',');
+          logar('    Característica: ' + c.uuid + ' [' + props + ']');
+          if (c.properties.write || c.properties.writeWithoutResponse) {
+            writeChar = c;
+            logar('    ^ marcada como writeChar (candidata a envio de comando)');
+          }
+        });
+      });
+    });
+  }).catch(function(e) {
+    logar('ERRO: ' + e.message);
+  });
+}
+
+function enviarTeste() {
+  if (!writeChar) { logar('Nenhuma característica de escrita encontrada ainda — rode "Conectar" primeiro.'); return; }
+  var tspl = 'SIZE 72 mm,40 mm\r\nGAP 2 mm,0\r\nCLS\r\nTEXT 20,20,"3",0,1,1,"TESTE K329"\r\nPRINT 1,1\r\n';
+  var bytes = new TextEncoder().encode(tspl);
+  writeChar.writeValue(bytes).then(function() {
+    logar('Comando TSPL enviado (' + bytes.length + ' bytes). Verifique se a etiqueta saiu.');
+  }).catch(function(e) {
+    logar('ERRO ao enviar: ' + e.message);
+  });
+}
+</script>
+</body>
+</html>
