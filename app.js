@@ -4249,6 +4249,79 @@ function switchCentralTab(tab, btn) {
   renderCentralAtual();
 }
 
+// ── Promotores (fornecedores + visitas) ──
+function switchPromotoresTab(tab, btn) {
+  document.getElementById('promotores-tab-fornecedores').style.display = tab === 'fornecedores' ? 'block' : 'none';
+  document.getElementById('promotores-tab-visitas').style.display = tab === 'visitas' ? 'block' : 'none';
+  document.querySelectorAll('#promotores-tabs .tab').forEach(function(t){t.classList.remove('on');});
+  if (btn) btn.classList.add('on');
+  if (tab === 'visitas') renderVisitasPromotor();
+}
+
+function fornecedoresCol() {
+  return db.collection('clientes').doc(S.clienteConfig.id).collection('fornecedores');
+}
+
+function renderFornecedores() {
+  var wrap = document.getElementById('fornecedores-lista');
+  wrap.innerHTML = '<div class="empty">Carregando...</div>';
+  fornecedoresCol().get().then(function(snap) {
+    if (snap.empty) { wrap.innerHTML = '<div class="empty">Nenhum fornecedor cadastrado ainda.</div>'; return; }
+    wrap.innerHTML = snap.docs.map(function(d) {
+      var f = d.data();
+      return '<div class="card" style="display:flex;align-items:center;justify-content:space-between;padding:14px;margin-bottom:8px">'
+        + '<div><strong>' + f.nome + '</strong><div style="font-size:12px;color:var(--t3)">Lojas: ' + (f.lojas||[]).join(', ') + '</div></div>'
+        + '<div style="display:flex;gap:6px">'
+        + '<button class="btn btn-s btn-sm" onclick="abrirQrFornecedor(\'' + (f.lojas && f.lojas[0] || '') + '\')">QR</button>'
+        + '<button class="btn btn-s btn-sm" onclick="abrirModalFornecedor(\'' + d.id + '\')">Editar</button>'
+        + '<button class="btn btn-d btn-sm" onclick="excluirFornecedor(\'' + d.id + '\')">Excluir</button>'
+        + '</div></div>';
+    }).join('');
+  });
+}
+
+function abrirModalFornecedor(id) {
+  document.getElementById('forn-id').value = id || '';
+  document.getElementById('forn-nome').value = '';
+  document.getElementById('forn-lojas').value = '';
+  document.getElementById('modal-fornecedor').style.display = 'flex';
+  if (id) {
+    fornecedoresCol().doc(id).get().then(function(doc) {
+      var f = doc.data();
+      document.getElementById('forn-nome').value = f.nome;
+      document.getElementById('forn-lojas').value = (f.lojas||[]).join(',');
+    });
+  }
+}
+
+function salvarFornecedor() {
+  var id = document.getElementById('forn-id').value;
+  var nome = document.getElementById('forn-nome').value.trim();
+  var lojas = document.getElementById('forn-lojas').value.split(',').map(function(s){return s.trim();}).filter(Boolean);
+  if (!nome || !lojas.length) { showToast('Preencha nome e ao menos uma loja.'); return; }
+  var dados = {nome: nome, lojas: lojas, ativo: true};
+  var op = id ? fornecedoresCol().doc(id).update(dados) : fornecedoresCol().add(dados);
+  op.then(function() {
+    document.getElementById('modal-fornecedor').style.display = 'none';
+    renderFornecedores();
+  });
+}
+
+function excluirFornecedor(id) {
+  if (!confirm('Excluir este fornecedor?')) return;
+  fornecedoresCol().doc(id).delete().then(renderFornecedores);
+}
+
+function abrirQrFornecedor(lojaId) {
+  if (!lojaId) { showToast('Esse fornecedor não tem loja cadastrada.'); return; }
+  var url = location.origin + '/checkin.html?c=' + S.clienteConfig.id + '&l=' + lojaId;
+  var qr = qrcode(0, 'M');
+  qr.addData(url);
+  qr.make();
+  document.getElementById('qr-container').innerHTML = qr.createSvgTag(5) + '<div style="font-size:11px;color:var(--t3);margin-top:8px;word-break:break-all">' + url + '</div>';
+  document.getElementById('modal-qr').style.display = 'flex';
+}
+
 function renderCentralAtual() {
   if (centralTabAtual === 'checklist') renderCentral();
   // inventario e perdas: dados da sessão atual

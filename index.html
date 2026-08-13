@@ -85,6 +85,10 @@
       <div class="sb-item" id="nav-central" style="display:none" onclick="nav('central',this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>Central de Resultados
       </div>
+      <div class="sb-item" id="nav-promotores" style="display:none" onclick="nav('promotores',this)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+        Promotores
+      </div>
       <div class="sb-item" id="nav-relat" style="display:none" onclick="nav('relatorios',this)">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>Relatórios
       </div>
@@ -96,9 +100,6 @@
 
       <!-- Módulos em breve (vitrine/upsell para quem decide compra) -->
       <div class="sb-sec" id="sb-embreve-sec" style="display:none">Em Breve</div>
-      <div class="sb-item sb-item-embreve" id="nav-embreve-promotores" style="display:none" onclick="_avisoEmBreve('Promotores')">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>Promotores<span class="sb-item-embreve-pill">EM BREVE</span>
-      </div>
       <div class="sb-item sb-item-embreve" id="nav-embreve-pesquisa" style="display:none" onclick="_avisoEmBreve('Pesquisa Concorrentes')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>Pesquisa Concorrentes<span class="sb-item-embreve-pill">EM BREVE</span>
       </div>
@@ -543,6 +544,48 @@
             <div class="card-hdr"><div class="card-title">Planos de Ação</div></div>
             <div id="cplano-lista"><div class="erow" style="padding:32px;text-align:center;color:var(--t3);font-size:13px">Carregando...</div></div>
           </div>
+        </div>
+      </div>
+
+      <div id="panel-promotores" class="panel">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
+          <div><div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:18px;font-weight:700">Promotores</div><div style="font-size:13px;color:var(--t3);margin-top:2px">Fornecedores e visitas por loja</div></div>
+        </div>
+        <div class="tabs" id="promotores-tabs" style="margin-bottom:16px">
+          <div class="tab on" onclick="switchPromotoresTab('fornecedores',this)">Fornecedores</div>
+          <div class="tab" onclick="switchPromotoresTab('visitas',this)">Visitas</div>
+        </div>
+
+        <div id="promotores-tab-fornecedores">
+          <button class="btn btn-p btn-sm" style="margin-bottom:14px" onclick="abrirModalFornecedor()">+ Novo Fornecedor</button>
+          <div id="fornecedores-lista"></div>
+        </div>
+
+        <div id="promotores-tab-visitas" style="display:none">
+          <div id="visitas-lista"></div>
+        </div>
+      </div>
+
+      <div class="modal-bg" id="modal-fornecedor" style="display:none">
+        <div class="modal-box" style="width:420px">
+          <div class="modal-title">Fornecedor</div>
+          <input type="hidden" id="forn-id">
+          <label>Nome</label>
+          <input id="forn-nome" placeholder="Nome do fornecedor">
+          <label style="margin-top:12px">Lojas atendidas (IDs separados por vírgula)</label>
+          <input id="forn-lojas" placeholder="1,2,3">
+          <div class="btn-row" style="margin-top:16px">
+            <button class="btn btn-p" onclick="salvarFornecedor()">Salvar</button>
+            <button class="btn btn-s" onclick="document.getElementById('modal-fornecedor').style.display='none'">Cancelar</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-bg" id="modal-qr" style="display:none">
+        <div class="modal-box" style="width:340px;text-align:center">
+          <div class="modal-title">QR Code da loja</div>
+          <div id="qr-container" style="margin:16px 0"></div>
+          <button class="btn btn-s" style="width:100%" onclick="document.getElementById('modal-qr').style.display='none'">Fechar</button>
         </div>
       </div>
 
@@ -1867,6 +1910,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="client.js"></script>
+<script src="qrcode-generator.min.js"></script>
 <script src="app.js?v=306" defer></script>
 
 
