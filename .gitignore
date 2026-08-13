@@ -13,3 +13,4 @@ data/avaria-mensal-congelado.json
 data/cd-notas-avulsas.json
 data/itau/certificado.pfx
 data/itau/config.json
+.worktrees/
