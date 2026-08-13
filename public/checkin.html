@@ -139,8 +139,56 @@ function fazerCheckin() {
   );
 }
 
+var visitaAbertaId = null;
+
 function verificarVisitaAberta() {
-  renderFormCheckin();
+  db.collection('clientes').doc(CLIENTE_ID).collection('promotor_visitas')
+    .where('sessionUid', '==', currentUid)
+    .where('checkOutEm', '==', null)
+    .limit(1).get().then(function(snap) {
+      if (snap.empty) { renderFormCheckin(); return; }
+      var doc = snap.docs[0];
+      visitaAbertaId = doc.id;
+      renderFormCheckout(doc.data());
+    }).catch(function(e) {
+      mostrarErro('Erro ao verificar visita: ' + e.message);
+    });
+}
+
+function renderFormCheckout(visita) {
+  var card = document.getElementById('card');
+  var hora = visita.checkInEm && visita.checkInEm.toDate ? visita.checkInEm.toDate().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'}) : '';
+  card.innerHTML =
+    '<div class="aberto"><b>Você está em: ' + visita.lojaNome + '</b>Fornecedor: ' + visita.fornecedorNome + '<br>Entrada às ' + hora + '</div>' +
+    '<div class="msg msg-err" id="co-erro"></div>' +
+    '<button id="co-btn" onclick="fazerCheckout()">Registrar saída</button>';
+}
+
+function fazerCheckout() {
+  var btn = document.getElementById('co-btn');
+  btn.disabled = true; btn.textContent = 'Registrando...';
+
+  function gravar(geo) {
+    db.collection('clientes').doc(CLIENTE_ID).collection('promotor_visitas').doc(visitaAbertaId).update({
+      checkOutEm: firebase.firestore.FieldValue.serverTimestamp(),
+      checkOutGeo: geo
+    }).then(function() {
+      document.getElementById('card').innerHTML =
+        '<div class="loja-nome">✅ Saída registrada</div><div class="sub">Obrigado! Você já pode fechar essa página.</div>';
+    }).catch(function(e) {
+      btn.disabled = false; btn.textContent = 'Registrar saída';
+      var erroEl = document.getElementById('co-erro');
+      erroEl.textContent = 'Erro ao registrar: ' + e.message;
+      erroEl.style.display = 'block';
+    });
+  }
+
+  if (!navigator.geolocation) { gravar(null); return; }
+  navigator.geolocation.getCurrentPosition(
+    function(pos) { gravar({lat: pos.coords.latitude, lng: pos.coords.longitude}); },
+    function() { gravar(null); },
+    {timeout: 5000}
+  );
 }
 
 iniciar();
