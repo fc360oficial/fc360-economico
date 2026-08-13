@@ -59,6 +59,8 @@ function conectar() {
             logar('    ^ marcada como writeChar (candidata a envio de comando)');
           }
         });
+      }).catch(function(e) {
+        logar('    Erro ao listar características do serviço ' + svc.uuid + ': ' + e.message);
       });
     });
   }).catch(function(e) {
