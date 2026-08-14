@@ -4574,6 +4574,9 @@ function confirmarImpressaoPontual(produto) {
       operadorId: S.currentUser ? S.currentUser.id : null,
       operadorNome: S.currentUser ? S.currentUser.nome : '-',
       timestamp: firebase.firestore.FieldValue.serverTimestamp()
+    }).catch(function(e) {
+      showToast('⚠️ Etiqueta impressa, mas houve erro ao registrar o log: ' + e.message);
+      throw { _loggedAlready: true };
     });
   }).then(function() {
     showToast('✅ Etiqueta impressa!');
@@ -4581,6 +4584,7 @@ function confirmarImpressaoPontual(produto) {
     document.getElementById('etc-preview').innerHTML = '';
     document.getElementById('etc-input-codigo').focus();
   }).catch(function(e) {
+    if (e && e._loggedAlready) return;
     showToast('❌ Erro ao imprimir: ' + e.message);
   });
 }
