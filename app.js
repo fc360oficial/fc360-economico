@@ -4448,6 +4448,24 @@ function renderEtiquetasLotes() {
   });
 }
 
+function renderEtiquetasHistorico() {
+  var wrap = document.getElementById('etiquetas-historico-lista');
+  wrap.innerHTML = '<div class="empty">Carregando...</div>';
+  db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_log')
+    .orderBy('timestamp', 'desc').limit(100).get().then(function(snap) {
+      if (snap.empty) { wrap.innerHTML = '<div class="empty">Nenhuma impressão registrada ainda.</div>'; return; }
+      wrap.innerHTML = '<table class="tbl"><thead><tr><th>Produto</th><th>Preço impresso</th><th>Origem</th><th>Operador</th><th>Data</th></tr></thead><tbody>'
+        + snap.docs.map(function(d) {
+          var l = d.data();
+          var dt = l.timestamp && l.timestamp.toDate ? l.timestamp.toDate().toLocaleString('pt-BR') : '-';
+          return '<tr><td>' + l.nomeProduto + '</td><td>R$ ' + Number(l.precoImpresso).toFixed(2) + '</td><td>' + (l.origem === 'lote' ? 'Lote' : 'Pontual') + '</td><td>' + l.operadorNome + '</td><td>' + dt + '</td></tr>';
+        }).join('')
+        + '</tbody></table>';
+    }).catch(function(e) {
+      wrap.innerHTML = '<div class="empty">Erro ao carregar: ' + e.message + '</div>';
+    });
+}
+
 function renderCentralAtual() {
   if (centralTabAtual === 'checklist') renderCentral();
   // inventario e perdas: dados da sessão atual
