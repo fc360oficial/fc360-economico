@@ -4399,12 +4399,18 @@ function buscarProdutoParaLote() {
   });
 }
 
+function _escHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+
 function renderLoteItensLista() {
   var wrap = document.getElementById('lote-itens-lista');
   if (!_loteItensAtual.length) { wrap.innerHTML = '<div class="empty">Nenhum item adicionado ainda.</div>'; return; }
   wrap.innerHTML = _loteItensAtual.map(function(item, i) {
     return '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--bd)">'
-      + '<div style="flex:1;font-size:13px">' + item.nomeProduto + '</div>'
+      + '<div style="flex:1;font-size:13px">' + _escHtml(item.nomeProduto) + '</div>'
       + '<input type="number" min="1" value="' + item.qtdEtiquetas + '" style="width:60px" onchange="_loteItensAtual[' + i + '].qtdEtiquetas=parseInt(this.value)||1">'
       + '<button class="btn btn-d btn-sm" onclick="_loteItensAtual.splice(' + i + ',1);renderLoteItensLista()">Remover</button>'
       + '</div>';
