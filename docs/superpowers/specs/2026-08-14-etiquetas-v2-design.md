@@ -15,13 +15,14 @@
 
 **Componente:** botão ícone de câmera ao lado do input. Ao tocar, abre um modal fullscreen com `<video>` da câmera traseira (`getUserMedia({video:{facingMode:'environment'}})`) e um loop `requestAnimationFrame` chamando `BarcodeDetector.detect(videoFrame)`.
 
-**Decisão técnica:** `BarcodeDetector` nativo do Chrome/Android, sem lib externa — mantém o padrão "vanilla JS sem bundler" já usado no resto do projeto, e aceita a mesma restrição de plataforma que o Web Bluetooth já impõe (só Chrome/Android; iOS Safari não suporta nenhum dos dois). Se `'BarcodeDetector' in window` for falso, o botão de câmera fica oculto — mesmo padrão de degradação já usado hoje.
+**Decisão técnica (corrigida durante o planejamento):** a decisão original era `BarcodeDetector` nativo do Chrome/Android, sem lib externa. Descartada ao descobrir que o próprio projeto já tentou exatamente isso pra leitura de EAN no Inventário (`iniciarScanEAN`, `app.js:12065`) e abandonou — comentário no código (`app.js:12057-12062`) documenta que no coletor físico real (o mesmo hardware usado em Etiquetas) o `BarcodeDetector` "ou não existe, ou existe mas o device não tem o módulo de barcode do ML Kit instalado, e o `detect()` fica resolvendo vazio pra sempre sem erro nenhum — a câmera abre mas nunca lê". A correção: usar **ZXing** (`@zxing/library`, já carregado via CDN em `index.html:18`), reaproveitando o mesmo padrão de `iniciarScanEAN` (que já funciona em produção no coletor real), em vez de duplicar o problema já resolvido.
 
 **Fluxo:**
-1. Toca no botão de câmera → abre modal, pede permissão de câmera.
-2. Permissão negada → mostra erro dentro do próprio modal, sem travar a tela de trás.
-3. Código detectado → para o loop, `track.stop()` no stream, fecha o modal, preenche `#etc-input-codigo` e chama `buscarProdutoPontual(codigo)` diretamente (reaproveita a função de busca existente — nenhuma duplicação de lógica).
-4. Botão "Cancelar" no modal fecha tudo sem preencher nada.
+1. Toca no botão de câmera → confere se `typeof ZXing !== 'undefined'` (mesma checagem de `iniciarScanEAN`); se a lib não carregou (sem internet), mostra toast e não abre nada.
+2. Abre overlay fullscreen com `<video>`, inicia `ZXing.BrowserMultiFormatReader` com os mesmos formatos de `iniciarScanEAN` (EAN-13, EAN-8, UPC-A, UPC-E, CODE-128) via `decodeFromConstraints`.
+3. Câmera indisponível/permissão negada → mensagem de erro, overlay fecha.
+4. Código detectado → `pararScanEAN`-equivalente (reset do reader, remove o stream/overlay), preenche `#etc-input-codigo` e chama `buscarProdutoPontual(codigo)` diretamente (reaproveita a função de busca existente — nenhuma duplicação de lógica de negócio, só a leitura de câmera é compartilhada com o padrão já existente).
+5. Botão "Cancelar" no overlay fecha tudo sem preencher nada.
 
 **Escopo:** só na aba Coleta mobile (Correção Pontual). A busca de item pra montar lote na retaguarda (`buscarProdutoParaLote`, tipicamente usada de desktop) continua só com input de texto.
 
@@ -65,8 +66,8 @@
 
 ## Erros e casos de borda
 
-- **BarcodeDetector indisponível** (iOS, Chrome antigo): botão de câmera oculto, sem erro visível — mesmo padrão do Bluetooth.
-- **Permissão de câmera negada:** erro dentro do modal, sem travar o resto da tela.
+- **ZXing não carregou** (sem internet): toast de aviso (mesmo texto/padrão de `iniciarScanEAN`), overlay não abre.
+- **Permissão de câmera negada:** erro dentro do overlay, sem travar o resto da tela.
 - **Bluetooth cai no meio do "imprimir tudo":** loop para, fila mantém os itens restantes, erro mostrado, botões reabilitados.
 - **Tentativa de imprimir sem impressora conectada** (Coleta ou Lotes, incluindo "imprimir tudo"): bloqueado na UI (botão desabilitado + faixa de aviso), não chega a tentar `imprimirEtiquetaBluetooth`.
 
