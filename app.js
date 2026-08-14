@@ -4466,6 +4466,64 @@ function renderEtiquetasHistorico() {
     });
 }
 
+// ── Etiquetas: coleta (mobile) — pareamento Bluetooth + impressão ──
+var _etcDevice = null, _etcGattServer = null, _etcWriteChar = null;
+
+function parearImpressora() {
+  var CANDIDATOS = ['49535343-fe7d-4ae5-8fa9-9fafd205e455'];
+  navigator.bluetooth.requestDevice({
+    acceptAllDevices: true,
+    optionalServices: CANDIDATOS
+  }).then(function(d) {
+    _etcDevice = d;
+    return d.gatt.connect();
+  }).then(function(server) {
+    _etcGattServer = server;
+    return server.getPrimaryServices();
+  }).then(function(services) {
+    return services[0].getCharacteristics();
+  }).then(function(chars) {
+    _etcWriteChar = chars.filter(function(c){ return c.properties.write || c.properties.writeWithoutResponse; })[0];
+    if (!_etcWriteChar) throw new Error('Nenhuma característica de escrita encontrada.');
+    document.getElementById('etc-status-conexao').textContent = '✅ Conectado em ' + _etcDevice.name;
+    document.getElementById('etc-pareamento').style.display = 'none';
+    document.getElementById('etc-operacional').style.display = 'block';
+    switchEtcTab('pontual', document.querySelector('#etc-tabs .tab'));
+  }).catch(function(e) {
+    document.getElementById('etc-status-conexao').textContent = '❌ Erro: ' + e.message;
+  });
+}
+
+function switchEtcTab(tab, btn) {
+  document.getElementById('etc-tab-pontual').style.display = tab === 'pontual' ? 'block' : 'none';
+  document.getElementById('etc-tab-lotes').style.display = tab === 'lotes' ? 'block' : 'none';
+  document.querySelectorAll('#etc-tabs .tab').forEach(function(t){t.classList.remove('on');});
+  if (btn) btn.classList.add('on');
+}
+
+// Monta o comando TSPL de acordo com o layout salvo pelo cliente (Task 5).
+function montarComandoTSPL(produto, layout) {
+  var campos = (layout && layout.campos) || {nome:true, preco:true, codigoBarras:true, unidade:false};
+  var y = 20;
+  var linhas = ['SIZE 72 mm,40 mm', 'GAP 2 mm,0', 'CLS'];
+  if (campos.nome) { linhas.push('TEXT 20,' + y + ',"3",0,1,1,"' + produto.nome.substring(0,32) + '"'); y += 40; }
+  if (campos.preco) { linhas.push('TEXT 20,' + y + ',"4",0,1,1,"R$ ' + Number(produto.preco).toFixed(2) + '"'); y += 50; }
+  if (campos.codigoBarras) { linhas.push('BARCODE 20,' + y + ',"128",60,1,0,2,2,"' + produto.codigoBarras + '"'); y += 80; }
+  if (campos.unidade) { linhas.push('TEXT 20,' + y + ',"2",0,1,1,"UN: ' + produto.unidade + '"'); }
+  linhas.push('PRINT 1,1');
+  return linhas.join('\r\n') + '\r\n';
+}
+
+function imprimirEtiquetaBluetooth(produto) {
+  if (!_etcWriteChar) return Promise.reject(new Error('Impressora não conectada.'));
+  return etiquetasLayoutDoc().get().then(function(doc) {
+    var layout = doc.exists ? doc.data() : null;
+    var tspl = montarComandoTSPL(produto, layout);
+    var bytes = new TextEncoder().encode(tspl);
+    return _etcWriteChar.writeValue(bytes);
+  });
+}
+
 function renderCentralAtual() {
   if (centralTabAtual === 'checklist') renderCentral();
   // inventario e perdas: dados da sessão atual
