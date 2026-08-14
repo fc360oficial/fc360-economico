@@ -4500,6 +4500,7 @@ function switchEtcTab(tab, btn) {
   document.querySelectorAll('#etc-tabs .tab').forEach(function(t){t.classList.remove('on');});
   if (btn) btn.classList.add('on');
   if (tab === 'pontual') renderEtcPontual();
+  if (tab === 'lotes') renderEtcLotes();
 }
 
 // Monta o comando TSPL de acordo com o layout salvo pelo cliente (Task 5).
@@ -4589,6 +4590,104 @@ function confirmarImpressaoPontual(produto) {
   }).catch(function(e) {
     if (e && e._loggedAlready) return;
     showToast('❌ Erro ao imprimir: ' + e.message);
+  });
+}
+
+// ── Etiquetas: fluxo de lote (mobile) — resolver preços, fila, conclusão ──
+function renderEtcLotes() {
+  var wrap = document.getElementById('etc-tab-lotes');
+  wrap.innerHTML = '<div class="empty">Carregando...</div>';
+  db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_lote')
+    .where('status', '==', 'pendente').get().then(function(snap) {
+      if (snap.empty) { wrap.innerHTML = '<div class="empty">Nenhum lote pendente.</div>'; return; }
+      wrap.innerHTML = snap.docs.map(function(d) {
+        var l = d.data();
+        return '<div class="card" style="padding:14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">' +
+          '<div>' + l.itens.length + ' itens</div>' +
+          '<button class="btn btn-p btn-sm" onclick="abrirLoteParaImpressao(\'' + d.id + '\')">Abrir</button>' +
+          '</div>';
+      }).join('');
+    });
+}
+
+var _loteAtualId = null, _loteAtualFila = [];
+
+function abrirLoteParaImpressao(loteId) {
+  _loteAtualId = loteId;
+  var wrap = document.getElementById('etc-tab-lotes');
+  wrap.innerHTML = '<div class="empty">Resolvendo preços...</div>';
+  db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_lote').doc(loteId).get()
+    .then(function(doc) {
+      var itens = doc.data().itens;
+      return firebase.auth().currentUser.getIdToken().then(function(token) {
+        return Promise.all(itens.map(function(item) {
+          return fetch(ETIQUETAS_API_URL + '/produto/' + encodeURIComponent(item.codigoBarras), {
+            headers: {Authorization: 'Bearer ' + token}
+          }).then(function(resp) { return resp.ok ? resp.json() : null; })
+            .then(function(produto) { return {item: item, produto: produto}; });
+        }));
+      });
+    }).then(function(resolvidos) {
+      _loteAtualFila = [];
+      resolvidos.forEach(function(r) {
+        if (!r.produto) return;
+        for (var i = 0; i < r.item.qtdEtiquetas; i++) _loteAtualFila.push(r.produto);
+      });
+      renderFilaLote();
+    });
+}
+
+function renderFilaLote() {
+  var wrap = document.getElementById('etc-tab-lotes');
+  if (!_loteAtualFila.length) {
+    wrap.innerHTML = '<div class="empty">Fila vazia ou todos os produtos falharam ao resolver.</div><button class="btn btn-s btn-sm" onclick="renderEtcLotes()">Voltar</button>';
+    return;
+  }
+  wrap.innerHTML = '<div style="margin-bottom:10px">Restam ' + _loteAtualFila.length + ' etiquetas.</div>' +
+    '<button class="btn btn-p" style="width:100%" onclick="imprimirProximoDaFila()">Imprimir próxima</button>';
+}
+
+// Avança a fila (item já foi fisicamente impresso, o log pode ou não ter sido gravado)
+// e conclui o lote quando a fila esvaziar. Retorna uma promise.
+function _avancarFilaLoteAposImpressao() {
+  _loteAtualFila.shift();
+  if (!_loteAtualFila.length) {
+    return db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_lote').doc(_loteAtualId)
+      .update({status: 'concluido'}).then(function() {
+        showToast('✅ Lote concluído!');
+        renderEtcLotes();
+      });
+  }
+  renderFilaLote();
+  return Promise.resolve();
+}
+
+function imprimirProximoDaFila() {
+  var produto = _loteAtualFila[0];
+  imprimirEtiquetaBluetooth(produto).then(function() {
+    return db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_log').add({
+      codigoBarras: produto.codigoBarras,
+      nomeProduto: produto.nome,
+      precoImpresso: produto.preco,
+      origem: 'lote',
+      loteId: _loteAtualId,
+      operadorId: S.currentUser ? S.currentUser.id : null,
+      operadorNome: S.currentUser ? S.currentUser.nome : '-',
+      timestamp: firebase.firestore.FieldValue.serverTimestamp()
+    }).then(function() {
+      // Impressão e log OK: avança a fila normalmente.
+      return _avancarFilaLoteAposImpressao();
+    }).catch(function(e) {
+      // A etiqueta já saiu da impressora — não reimprimir. Avança a fila mesmo
+      // com o log falhando, só avisando o operador (mesmo padrão de confirmarImpressaoPontual).
+      showToast('⚠️ Etiqueta impressa, mas houve erro ao registrar o log: ' + e.message);
+      return _avancarFilaLoteAposImpressao().then(function() {
+        throw { _loggedAlready: true };
+      });
+    });
+  }).catch(function(e) {
+    if (e && e._loggedAlready) return;
+    showToast('❌ Erro ao imprimir: ' + e.message + ' (fila mantida, tente de novo)');
   });
 }
 
