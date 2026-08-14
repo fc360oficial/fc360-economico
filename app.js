@@ -1820,6 +1820,7 @@ var PAGE_TITLES = {
   relatorios:'Relatórios',usuarios:'Cadastro de Usuários',
   plano:'Plano de Ação',monitor:'Monitor Ao Vivo',
   inv:'FC360 Inventário','inv-coleta':'Minha Coleta','inv-avulsa':'Coleta Avulsa',
+  etiquetas:'Etiquetas',
 };
 
 function nav(page, el) {
@@ -1864,6 +1865,9 @@ function nav(page, el) {
       gerarPillsMesCentral();
       switchCentralTab('checklist', document.querySelector('#central-tabs .tab'));
     });
+  }
+  if (page === 'etiquetas') {
+    switchEtiquetasTab('layout', document.querySelector('#etiquetas-tabs .tab'));
   }
   if (page==='plano') {
     loadPlanosFromFirebase(function(){
@@ -4320,6 +4324,41 @@ function abrirQrFornecedor(lojaId) {
   qr.make();
   document.getElementById('qr-container').innerHTML = qr.createSvgTag(5) + '<div style="font-size:11px;color:var(--t3);margin-top:8px;word-break:break-all">' + url + '</div>';
   document.getElementById('modal-qr').style.display = 'flex';
+}
+
+// ── Etiquetas ──
+function etiquetasLayoutDoc() {
+  return db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_layout').doc('padrao');
+}
+
+function switchEtiquetasTab(tab, btn) {
+  document.getElementById('etiquetas-tab-layout').style.display = tab === 'layout' ? 'block' : 'none';
+  document.getElementById('etiquetas-tab-lotes').style.display = tab === 'lotes' ? 'block' : 'none';
+  document.getElementById('etiquetas-tab-historico').style.display = tab === 'historico' ? 'block' : 'none';
+  document.querySelectorAll('#etiquetas-tabs .tab').forEach(function(t){t.classList.remove('on');});
+  if (btn) btn.classList.add('on');
+  if (tab === 'layout') carregarEtiquetasLayout();
+  if (tab === 'lotes') renderEtiquetasLotes();
+  if (tab === 'historico') renderEtiquetasHistorico();
+}
+
+function carregarEtiquetasLayout() {
+  etiquetasLayoutDoc().get().then(function(doc) {
+    var campos = (doc.exists && doc.data().campos) || {nome:true, preco:true, codigoBarras:true, unidade:false};
+    ['nome','preco','codigoBarras','unidade'].forEach(function(c) {
+      document.getElementById('etl-campo-'+c).checked = !!campos[c];
+    });
+  });
+}
+
+function salvarEtiquetasLayout() {
+  var campos = {};
+  ['nome','preco','codigoBarras','unidade'].forEach(function(c) {
+    campos[c] = document.getElementById('etl-campo-'+c).checked;
+  });
+  etiquetasLayoutDoc().set({campos: campos, tamanhoEtiqueta: '72mm', ativo: true}).then(function() {
+    showToast('✅ Layout salvo!');
+  });
 }
 
 function renderCentralAtual() {
