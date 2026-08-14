@@ -4499,6 +4499,7 @@ function switchEtcTab(tab, btn) {
   document.getElementById('etc-tab-lotes').style.display = tab === 'lotes' ? 'block' : 'none';
   document.querySelectorAll('#etc-tabs .tab').forEach(function(t){t.classList.remove('on');});
   if (btn) btn.classList.add('on');
+  if (tab === 'pontual') renderEtcPontual();
 }
 
 // Monta o comando TSPL de acordo com o layout salvo pelo cliente (Task 5).
@@ -4521,6 +4522,66 @@ function imprimirEtiquetaBluetooth(produto) {
     var tspl = montarComandoTSPL(produto, layout);
     var bytes = new TextEncoder().encode(tspl);
     return _etcWriteChar.writeValue(bytes);
+  });
+}
+
+// ── Etiquetas: correção pontual (mobile) — scan, prévia, impressão, log ──
+function renderEtcPontual() {
+  var wrap = document.getElementById('etc-tab-pontual');
+  wrap.innerHTML =
+    '<input id="etc-input-codigo" placeholder="Bipe o código de barras" autofocus style="width:100%;padding:14px;font-size:16px;margin-bottom:12px">' +
+    '<div id="etc-preview"></div>';
+  var input = document.getElementById('etc-input-codigo');
+  var timer = null;
+  input.addEventListener('input', function() {
+    clearTimeout(timer);
+    timer = setTimeout(function() { buscarProdutoPontual(input.value.trim()); }, 1000);
+  });
+}
+
+function buscarProdutoPontual(codigo) {
+  if (!codigo) return;
+  var preview = document.getElementById('etc-preview');
+  preview.innerHTML = '<div class="empty">Buscando...</div>';
+  firebase.auth().currentUser.getIdToken().then(function(token) {
+    return fetch(ETIQUETAS_API_URL + '/produto/' + encodeURIComponent(codigo), {
+      headers: {Authorization: 'Bearer ' + token}
+    });
+  }).then(function(resp) {
+    if (resp.status === 404) throw new Error('Produto não encontrado.');
+    if (!resp.ok) throw new Error('Erro ao consultar o ERP.');
+    return resp.json();
+  }).then(function(produto) {
+    preview.innerHTML =
+      '<div class="card" style="padding:16px">' +
+        '<div style="font-weight:700;margin-bottom:4px">' + _escHtml(produto.nome) + '</div>' +
+        '<div style="font-size:20px;color:var(--pri);font-weight:800;margin-bottom:12px">R$ ' + produto.preco.toFixed(2) + '</div>' +
+        '<button class="btn btn-p" style="width:100%" onclick="confirmarImpressaoPontual(' + JSON.stringify(produto).replace(/"/g,'&quot;') + ')">Imprimir etiqueta</button>' +
+      '</div>';
+  }).catch(function(e) {
+    preview.innerHTML = '<div class="empty">' + e.message + '</div>';
+  });
+}
+
+function confirmarImpressaoPontual(produto) {
+  imprimirEtiquetaBluetooth(produto).then(function() {
+    return db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_log').add({
+      codigoBarras: produto.codigoBarras,
+      nomeProduto: produto.nome,
+      precoImpresso: produto.preco,
+      origem: 'pontual',
+      loteId: null,
+      operadorId: S.currentUser ? S.currentUser.id : null,
+      operadorNome: S.currentUser ? S.currentUser.nome : '-',
+      timestamp: firebase.firestore.FieldValue.serverTimestamp()
+    });
+  }).then(function() {
+    showToast('✅ Etiqueta impressa!');
+    document.getElementById('etc-input-codigo').value = '';
+    document.getElementById('etc-preview').innerHTML = '';
+    document.getElementById('etc-input-codigo').focus();
+  }).catch(function(e) {
+    showToast('❌ Erro ao imprimir: ' + e.message);
   });
 }
 
