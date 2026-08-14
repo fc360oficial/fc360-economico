@@ -4576,6 +4576,9 @@ function confirmarImpressaoPontual(produto) {
       timestamp: firebase.firestore.FieldValue.serverTimestamp()
     }).catch(function(e) {
       showToast('⚠️ Etiqueta impressa, mas houve erro ao registrar o log: ' + e.message);
+      document.getElementById('etc-input-codigo').value = '';
+      document.getElementById('etc-preview').innerHTML = '';
+      document.getElementById('etc-input-codigo').focus();
       throw { _loggedAlready: true };
     });
   }).then(function() {
