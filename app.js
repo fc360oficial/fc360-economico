@@ -1825,7 +1825,7 @@ var PAGE_TITLES = {
   relatorios:'Relatórios',usuarios:'Cadastro de Usuários',
   plano:'Plano de Ação',monitor:'Monitor Ao Vivo',
   inv:'FC360 Inventário','inv-coleta':'Minha Coleta','inv-avulsa':'Coleta Avulsa',
-  etiquetas:'Etiquetas',
+  etiquetas:'Etiquetas','etiquetas-coleta':'Etiquetas',
 };
 
 function nav(page, el) {
@@ -4357,6 +4357,8 @@ function carregarEtiquetasLayout() {
     ['nome','preco','codigoBarras','unidade'].forEach(function(c) {
       document.getElementById('etl-campo-'+c).checked = !!campos[c];
     });
+  }).catch(function(e) {
+    showToast('❌ Erro ao carregar layout: ' + e.message);
   });
 }
 
@@ -4367,6 +4369,8 @@ function salvarEtiquetasLayout() {
   });
   etiquetasLayoutDoc().set({campos: campos, tamanhoEtiqueta: '72mm', ativo: true}).then(function() {
     showToast('✅ Layout salvo!');
+  }).catch(function(e) {
+    showToast('❌ Erro ao salvar layout: ' + e.message);
   });
 }
 
@@ -4436,6 +4440,8 @@ function salvarLote() {
     document.getElementById('modal-lote').style.display = 'none';
     renderEtiquetasLotes();
     showToast('✅ Lote criado!');
+  }).catch(function(e) {
+    showToast('❌ Erro ao criar lote: ' + e.message);
   });
 }
 
@@ -4453,6 +4459,9 @@ function renderEtiquetasLotes() {
         return '<tr><td>' + dt + '</td><td>' + (l.itens||[]).length + '</td><td>' + st + '</td></tr>';
       }).join('')
       + '</tbody></table>';
+  }).catch(function(e) {
+    var tabela = document.getElementById('etiquetas-lotes-tabela');
+    if (tabela) tabela.innerHTML = '<div class="empty">Erro ao carregar: ' + e.message + '</div>';
   });
 }
 
@@ -4476,6 +4485,10 @@ function renderEtiquetasHistorico() {
 
 // ── Etiquetas: coleta (mobile) — pareamento Bluetooth + impressão ──
 var _etcDevice = null, _etcGattServer = null, _etcWriteChar = null;
+// Trava contra impressão duplicada: um duplo-toque no botão de imprimir
+// (plausível em coletor com lag de UI) dispararia duas chamadas concorrentes
+// de imprimirEtiquetaBluetooth e imprimiria a etiqueta física duas vezes.
+var _etcImprimindo = false;
 
 function parearImpressora() {
   var CANDIDATOS = ['49535343-fe7d-4ae5-8fa9-9fafd205e455'];
@@ -4511,15 +4524,23 @@ function switchEtcTab(tab, btn) {
   if (tab === 'lotes') renderEtcLotes();
 }
 
+// Sanitiza texto interpolado dentro de comandos TSPL: aspas/quebras de linha/
+// barra invertida quebrariam a sintaxe do comando "…" (ex.: produto.nome
+// contendo `"` como em `TV 32"`), gerando etiqueta corrompida ou impressão
+// silenciosamente falha. Também cobre o caso de campo nulo/indefinido.
+function _tsplTxt(s) {
+  return String(s == null ? '' : s).replace(/["\r\n\\]/g, ' ').substring(0, 32);
+}
+
 // Monta o comando TSPL de acordo com o layout salvo pelo cliente (Task 5).
 function montarComandoTSPL(produto, layout) {
   var campos = (layout && layout.campos) || {nome:true, preco:true, codigoBarras:true, unidade:false};
   var y = 20;
   var linhas = ['SIZE 72 mm,40 mm', 'GAP 2 mm,0', 'CLS'];
-  if (campos.nome) { linhas.push('TEXT 20,' + y + ',"3",0,1,1,"' + produto.nome.substring(0,32) + '"'); y += 40; }
+  if (campos.nome) { linhas.push('TEXT 20,' + y + ',"3",0,1,1,"' + _tsplTxt(produto.nome) + '"'); y += 40; }
   if (campos.preco) { linhas.push('TEXT 20,' + y + ',"4",0,1,1,"R$ ' + Number(produto.preco).toFixed(2) + '"'); y += 50; }
-  if (campos.codigoBarras) { linhas.push('BARCODE 20,' + y + ',"128",60,1,0,2,2,"' + produto.codigoBarras + '"'); y += 80; }
-  if (campos.unidade) { linhas.push('TEXT 20,' + y + ',"2",0,1,1,"UN: ' + produto.unidade + '"'); }
+  if (campos.codigoBarras) { linhas.push('BARCODE 20,' + y + ',"128",60,1,0,2,2,"' + _tsplTxt(produto.codigoBarras) + '"'); y += 80; }
+  if (campos.unidade) { linhas.push('TEXT 20,' + y + ',"2",0,1,1,"UN: ' + _tsplTxt(produto.unidade) + '"'); }
   linhas.push('PRINT 1,1');
   return linhas.join('\r\n') + '\r\n';
 }
@@ -4565,14 +4586,18 @@ function buscarProdutoPontual(codigo) {
       '<div class="card" style="padding:16px">' +
         '<div style="font-weight:700;margin-bottom:4px">' + _escHtml(produto.nome) + '</div>' +
         '<div style="font-size:20px;color:var(--pri);font-weight:800;margin-bottom:12px">R$ ' + produto.preco.toFixed(2) + '</div>' +
-        '<button class="btn btn-p" style="width:100%" onclick="confirmarImpressaoPontual(' + JSON.stringify(produto).replace(/"/g,'&quot;') + ')">Imprimir etiqueta</button>' +
+        '<button class="btn btn-p" style="width:100%" onclick="confirmarImpressaoPontual(' + _escHtml(JSON.stringify(produto)) + ')">Imprimir etiqueta</button>' +
       '</div>';
   }).catch(function(e) {
-    preview.innerHTML = '<div class="empty">' + e.message + '</div>';
+    preview.innerHTML = '<div class="empty">' + _escHtml(e.message) + '</div>';
   });
 }
 
 function confirmarImpressaoPontual(produto) {
+  if (_etcImprimindo) return;
+  _etcImprimindo = true;
+  var btn = document.querySelector('#etc-preview button.btn-p');
+  if (btn) btn.disabled = true;
   imprimirEtiquetaBluetooth(produto).then(function() {
     return db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_log').add({
       codigoBarras: produto.codigoBarras,
@@ -4598,6 +4623,11 @@ function confirmarImpressaoPontual(produto) {
   }).catch(function(e) {
     if (e && e._loggedAlready) return;
     showToast('❌ Erro ao imprimir: ' + e.message);
+  }).then(function() {
+    // Roda sempre (sucesso ou erro tratado acima) — equivalente a um "finally"
+    // nesta cadeia baseada em .then()/.catch() sem async/await.
+    _etcImprimindo = false;
+    if (btn) btn.disabled = false;
   });
 }
 
@@ -4615,6 +4645,8 @@ function renderEtcLotes() {
           '<button class="btn btn-p btn-sm" onclick="abrirLoteParaImpressao(\'' + d.id + '\')">Abrir</button>' +
           '</div>';
       }).join('');
+    }).catch(function(e) {
+      wrap.innerHTML = '<div class="empty">Erro ao carregar: ' + e.message + '</div>';
     });
 }
 
@@ -4642,6 +4674,8 @@ function abrirLoteParaImpressao(loteId) {
         for (var i = 0; i < r.item.qtdEtiquetas; i++) _loteAtualFila.push(r.produto);
       });
       renderFilaLote();
+    }).catch(function(e) {
+      wrap.innerHTML = '<div class="empty">Erro ao carregar: ' + e.message + '</div>';
     });
 }
 
@@ -4679,6 +4713,10 @@ function _avancarFilaLoteAposImpressao() {
 
 function imprimirProximoDaFila() {
   if (!_loteAtualFila.length) return;
+  if (_etcImprimindo) return;
+  _etcImprimindo = true;
+  var btn = document.querySelector('#etc-tab-lotes button.btn-p');
+  if (btn) btn.disabled = true;
   var produto = _loteAtualFila[0];
   imprimirEtiquetaBluetooth(produto).then(function() {
     return db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_log').add({
@@ -4704,6 +4742,11 @@ function imprimirProximoDaFila() {
   }).catch(function(e) {
     if (e && e._loggedAlready) return;
     showToast('❌ Erro ao imprimir: ' + e.message + ' (fila mantida, tente de novo)');
+  }).then(function() {
+    // Roda sempre (sucesso ou erro tratado acima) — equivalente a um "finally"
+    // nesta cadeia baseada em .then()/.catch() sem async/await.
+    _etcImprimindo = false;
+    if (btn) btn.disabled = false;
   });
 }
 
