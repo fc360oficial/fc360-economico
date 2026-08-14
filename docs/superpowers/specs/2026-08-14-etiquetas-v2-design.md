@@ -17,12 +17,11 @@
 
 **Decisão técnica (corrigida durante o planejamento):** a decisão original era `BarcodeDetector` nativo do Chrome/Android, sem lib externa. Descartada ao descobrir que o próprio projeto já tentou exatamente isso pra leitura de EAN no Inventário (`iniciarScanEAN`, `app.js:12065`) e abandonou — comentário no código (`app.js:12057-12062`) documenta que no coletor físico real (o mesmo hardware usado em Etiquetas) o `BarcodeDetector` "ou não existe, ou existe mas o device não tem o módulo de barcode do ML Kit instalado, e o `detect()` fica resolvendo vazio pra sempre sem erro nenhum — a câmera abre mas nunca lê". A correção: usar **ZXing** (`@zxing/library`, já carregado via CDN em `index.html:18`), reaproveitando o mesmo padrão de `iniciarScanEAN` (que já funciona em produção no coletor real), em vez de duplicar o problema já resolvido.
 
-**Fluxo:**
-1. Toca no botão de câmera → confere se `typeof ZXing !== 'undefined'` (mesma checagem de `iniciarScanEAN`); se a lib não carregou (sem internet), mostra toast e não abre nada.
-2. Abre overlay fullscreen com `<video>`, inicia `ZXing.BrowserMultiFormatReader` com os mesmos formatos de `iniciarScanEAN` (EAN-13, EAN-8, UPC-A, UPC-E, CODE-128) via `decodeFromConstraints`.
-3. Câmera indisponível/permissão negada → mensagem de erro, overlay fecha.
-4. Código detectado → `pararScanEAN`-equivalente (reset do reader, remove o stream/overlay), preenche `#etc-input-codigo` e chama `buscarProdutoPontual(codigo)` diretamente (reaproveita a função de busca existente — nenhuma duplicação de lógica de negócio, só a leitura de câmera é compartilhada com o padrão já existente).
-5. Botão "Cancelar" no overlay fecha tudo sem preencher nada.
+**Fluxo (reaproveitamento total, sem código de câmera novo):**
+1. Botão de câmera chama `iniciarScanEAN('etc-input-codigo')` diretamente — a mesma função já usada no Inventário, sem nenhuma duplicação.
+2. `iniciarScanEAN` já cuida de tudo: checa `typeof ZXing`, abre o overlay fullscreen, lê o código, e ao detectar preenche o input e dispara um evento `keydown` de Enter nele.
+3. Único ponto novo: `#etc-input-codigo` precisa de um listener de `keydown` (Enter) que dispara `buscarProdutoPontual` imediatamente — hoje só existe o listener de `input` com debounce de 1s, que não é acionado por um `dispatchEvent` de `keydown`. Esse listener de Enter também beneficia quem bipa com coletor físico configurado pra enviar Enter após o código (comum em leitores HID) ou digita e aperta Enter manualmente — busca imediata em vez de esperar o debounce.
+4. Câmera indisponível/permissão negada/ZXing não carregou: tratado pelo `iniciarScanEAN` existente (toast), sem necessidade de tratamento próprio.
 
 **Escopo:** só na aba Coleta mobile (Correção Pontual). A busca de item pra montar lote na retaguarda (`buscarProdutoParaLote`, tipicamente usada de desktop) continua só com input de texto.
 
@@ -66,8 +65,7 @@
 
 ## Erros e casos de borda
 
-- **ZXing não carregou** (sem internet): toast de aviso (mesmo texto/padrão de `iniciarScanEAN`), overlay não abre.
-- **Permissão de câmera negada:** erro dentro do overlay, sem travar o resto da tela.
+- **ZXing não carregou / permissão negada / câmera indisponível:** já tratado pelo `iniciarScanEAN` reaproveitado — nenhum tratamento novo necessário.
 - **Bluetooth cai no meio do "imprimir tudo":** loop para, fila mantém os itens restantes, erro mostrado, botões reabilitados.
 - **Tentativa de imprimir sem impressora conectada** (Coleta ou Lotes, incluindo "imprimir tudo"): bloqueado na UI (botão desabilitado + faixa de aviso), não chega a tentar `imprimirEtiquetaBluetooth`.
 
