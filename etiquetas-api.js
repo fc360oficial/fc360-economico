@@ -3,13 +3,17 @@
 require('dotenv').config({ path: '.env.etiquetas-api' });
 const express = require('express');
 const cors = require('cors');
-const admin = require('firebase-admin');
+// firebase-admin ^14 usa a API modular (sem o namespace admin.auth()/
+// admin.firestore()/admin.credential.cert() das versões antigas).
+const { initializeApp, cert } = require('firebase-admin/app');
+const { getAuth } = require('firebase-admin/auth');
+const { getFirestore } = require('firebase-admin/firestore');
 const mysql = require('mysql2/promise');
 
-admin.initializeApp({
-  credential: admin.credential.cert(require(process.env.GOOGLE_APPLICATION_CREDENTIALS))
+initializeApp({
+  credential: cert(require(process.env.GOOGLE_APPLICATION_CREDENTIALS))
 });
-const firestore = admin.firestore();
+const firestore = getFirestore();
 
 const app = express();
 
@@ -42,7 +46,7 @@ async function verificarToken(req, res, next) {
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
   if (!token) return res.status(401).json({ error: 'Token ausente' });
   try {
-    const decoded = await admin.auth().verifyIdToken(token);
+    const decoded = await getAuth().verifyIdToken(token);
     const snap = await firestore.collection('usuarios')
       .where('email', '==', (decoded.email || '').toLowerCase())
       .limit(1).get();
