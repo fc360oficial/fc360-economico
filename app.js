@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '306';
+var BUILD = '307';
 var ETIQUETAS_API_URL = 'https://etiquetas-api.SEU-DOMINIO-AQUI.com'; // ajustar quando a API estiver publicada no .254
 (function() {
   var vEl = document.getElementById('sb-versao');
@@ -1001,7 +1001,11 @@ var CAPA_MODULOS = [
     icone:'<rect x="1" y="7" width="15" height="13" rx="2"/><path d="M16 11h3l3 4v5h-6"/><circle cx="6" cy="20" r="1.5"/><circle cx="17" cy="20" r="1.5"/>' },
   { id:'validade', label:'Validade', desenvolvido:false,
     icone:'<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>' },
-  { id:'etiquetas', label:'Etiquetas e Ofertas', desenvolvido:false,
+  { id:'etiquetas', label:'Etiquetas', desenvolvido:true, moduloChave:'etiquetas',
+    // Correção pontual/lote é um fluxo de chão de loja: aberto pra qualquer
+    // perfil operacional, não só admin/supervisor (diferente de 'central').
+    roleOk: function(){ return true; },
+    page: function(){ return (S.role==='admin' || S.role==='supervisor') ? 'etiquetas' : 'etiquetas-coleta'; },
     icone:'<path d="M20.59 13.41L11 3.83V3h.01L20.59 12.59a2 2 0 010 2.82z"/><path d="M11 3H4a1 1 0 00-1 1v7l9.59 9.59a2 2 0 002.82 0l6.18-6.18a2 2 0 000-2.82z"/><circle cx="7.5" cy="7.5" r="1.5"/>' }
 ];
 
@@ -1710,6 +1714,7 @@ function setupRole() {
   if (tabGer) tabGer.style.display = (isAdmin || isSup) ? '' : 'none';
   show('nav-dashboard', (isAdmin || isSup) && !isColetor);
   show('nav-central', (isAdmin || isSup) && !isColetor && _moduloAtivo('central'));
+  show('nav-etiquetas', (isAdmin || isSup) && !isColetor && _moduloAtivo('etiquetas'));
   show('nav-relat', (isAdmin || isSup || r==='gerencia') && !isColetor);
   show('nav-assistente', isAdmin && _moduloAtivo('assistente_ia'));
   show('nav-monitor', isAdmin && _moduloAtivo('monitor'));
@@ -1730,7 +1735,6 @@ function setupRole() {
   show('nav-embreve-pesquisa', mostrarEmBreve);
   show('nav-embreve-recebimento', mostrarEmBreve);
   show('nav-embreve-validade', mostrarEmBreve);
-  show('nav-embreve-etiquetas', mostrarEmBreve);
   if (isAdmOrGer || isSup) {
     pedirPermissaoNotificacao();
     setTimeout(iniciarVerificacaoPeriodica, 3000);
@@ -1869,6 +1873,10 @@ function nav(page, el) {
   }
   if (page === 'etiquetas') {
     switchEtiquetasTab('layout', document.querySelector('#etiquetas-tabs .tab'));
+  }
+  if (page === 'etiquetas-coleta') {
+    // Nada a carregar aqui: o próprio botão "Conectar na impressora"
+    // (Task 8) dispara o resto do fluxo depois que o operador conecta.
   }
   if (page==='plano') {
     loadPlanosFromFirebase(function(){
@@ -8135,8 +8143,8 @@ function _renderClientesLista() {
   var wrap = document.getElementById('painel-clientes-wrap');
   if (!wrap) return;
   var hoje = new Date(); hoje.setHours(0,0,0,0);
-  var MODS = ['checklist','inventario','planos_acao','relatorios','central','monitor','assistente_ia'];
-  var MODS_LABEL = {checklist:'Checklist',inventario:'Inventário',planos_acao:'Planos',alertas:'Alertas',relatorios:'Relatórios',central:'Central',monitor:'Monitor',assistente_ia:'IA'};
+  var MODS = ['checklist','inventario','planos_acao','relatorios','central','monitor','assistente_ia','etiquetas'];
+  var MODS_LABEL = {checklist:'Checklist',inventario:'Inventário',planos_acao:'Planos',alertas:'Alertas',relatorios:'Relatórios',central:'Central',monitor:'Monitor',assistente_ia:'IA',etiquetas:'Etiquetas'};
   var PLANO_LABEL = {basico:'Básico',completo:'Completo',premium:'Premium'};
 
   var ativosCount = _clientesCache.filter(function(c){ return c.ativo !== false; }).length;
@@ -8312,8 +8320,8 @@ function _atualizarVersaoClientes() {
 
 function abrirEditarCliente(clienteId) {
   var c = _clientesCache.find(function(x){ return x.id===clienteId; }) || {};
-  var MODS = ['checklist','inventario','planos_acao','relatorios','central','assistente_ia','monitor'];
-  var MODS_LABEL = {checklist:'Checklist',inventario:'Inventário',planos_acao:'Planos de Ação',alertas:'Alertas',relatorios:'Relatórios',central:'Central de Resultados',assistente_ia:'Assistente IA',monitor:'Monitor'};
+  var MODS = ['checklist','inventario','planos_acao','relatorios','central','assistente_ia','monitor','etiquetas'];
+  var MODS_LABEL = {checklist:'Checklist',inventario:'Inventário',planos_acao:'Planos de Ação',alertas:'Alertas',relatorios:'Relatórios',central:'Central de Resultados',assistente_ia:'Assistente IA',monitor:'Monitor',etiquetas:'Etiquetas'};
   var modHtml = MODS.map(function(m){
     var on = !c.modulos || c.modulos[m] !== false;
     var ls = on ? 'background:rgba(34,197,94,.1);color:#15803d;border-radius:8px;' : 'color:var(--t2);border-radius:8px;';
@@ -8349,7 +8357,7 @@ function fecharEditarCliente() {
 }
 
 function salvarEdicaoCliente(clienteId) {
-  var MODS = ['checklist','inventario','planos_acao','perdas','relatorios','central','assistente_ia','monitor'];
+  var MODS = ['checklist','inventario','planos_acao','perdas','relatorios','central','assistente_ia','monitor','etiquetas'];
   var modulos = {};
   MODS.forEach(function(m){ modulos[m] = !!(document.getElementById('ec-mod-'+m)||{}).checked; });
   var dados = {
@@ -8369,8 +8377,8 @@ function salvarEdicaoCliente(clienteId) {
 }
 
 function abrirNovoCliente() {
-  var MODS = ['checklist','inventario','planos_acao','relatorios','central','assistente_ia','monitor'];
-  var MODS_LABEL = {checklist:'Checklist',inventario:'Inventário',planos_acao:'Planos de Ação',alertas:'Alertas',relatorios:'Relatórios',central:'Central de Resultados',assistente_ia:'Assistente IA',monitor:'Monitor'};
+  var MODS = ['checklist','inventario','planos_acao','relatorios','central','assistente_ia','monitor','etiquetas'];
+  var MODS_LABEL = {checklist:'Checklist',inventario:'Inventário',planos_acao:'Planos de Ação',alertas:'Alertas',relatorios:'Relatórios',central:'Central de Resultados',assistente_ia:'Assistente IA',monitor:'Monitor',etiquetas:'Etiquetas'};
   var modHtml = MODS.map(function(m){
     return '<label onchange="var i=this.querySelector(\'input\');this.style.background=i.checked?\'rgba(34,197,94,.1)\':\'\';this.style.color=i.checked?\'#15803d\':\'\';" style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:7px 10px;font-size:13px;font-weight:600;background:rgba(34,197,94,.1);color:#15803d;border-radius:8px;">'+
       '<input type="checkbox" id="nc-mod-'+m+'" checked style="width:16px;height:16px;accent-color:#22c55e;flex-shrink:0"> '+MODS_LABEL[m]+'</label>';
@@ -8400,7 +8408,7 @@ function fecharNovoCliente() {
 }
 
 function criarNovoCliente() {
-  var MODS = ['checklist','inventario','planos_acao','perdas','relatorios','central','assistente_ia','monitor'];
+  var MODS = ['checklist','inventario','planos_acao','perdas','relatorios','central','assistente_ia','monitor','etiquetas'];
   var nome = (document.getElementById('nc-nome')||{}).value||'';
   var id = ((document.getElementById('nc-id')||{}).value||'').toLowerCase().replace(/[^a-z0-9]/g,'');
   var errEl = document.getElementById('nc-err');
