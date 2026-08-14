@@ -4458,7 +4458,7 @@ function renderEtiquetasHistorico() {
         + snap.docs.map(function(d) {
           var l = d.data();
           var dt = l.timestamp && l.timestamp.toDate ? l.timestamp.toDate().toLocaleString('pt-BR') : '-';
-          return '<tr><td>' + l.nomeProduto + '</td><td>R$ ' + Number(l.precoImpresso).toFixed(2) + '</td><td>' + (l.origem === 'lote' ? 'Lote' : 'Pontual') + '</td><td>' + l.operadorNome + '</td><td>' + dt + '</td></tr>';
+          return '<tr><td>' + _escHtml(l.nomeProduto) + '</td><td>R$ ' + Number(l.precoImpresso).toFixed(2) + '</td><td>' + (l.origem === 'lote' ? 'Lote' : 'Pontual') + '</td><td>' + _escHtml(l.operadorNome) + '</td><td>' + dt + '</td></tr>';
         }).join('')
         + '</tbody></table>';
     }).catch(function(e) {
