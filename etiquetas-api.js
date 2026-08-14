@@ -3,6 +3,7 @@
 require('dotenv').config({ path: '.env.etiquetas-api' });
 const express = require('express');
 const admin = require('firebase-admin');
+const mysql = require('mysql2/promise');
 
 admin.initializeApp({
   credential: admin.credential.cert(require(process.env.GOOGLE_APPLICATION_CREDENTIALS))
@@ -33,6 +34,40 @@ async function verificarToken(req, res, next) {
 }
 
 app.get('/health', (req, res) => res.json({ ok: true }));
+
+const dbConfig = {
+  host: process.env.DB_HOST,
+  port: Number(process.env.DB_PORT) || 3306,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  connectTimeout: 15000
+};
+
+// Tabela confirmada via investigação de schema (supermercado.itens, chave
+// nInterno) — é a que tem preço real e atualizado; central.itens existe
+// mas está com 100% dos preços zerados (base legada), não usar.
+app.get('/produto/:codigoBarras', verificarToken, async function(req, res) {
+  var conn;
+  try {
+    conn = await mysql.createConnection(dbConfig);
+    var [rows] = await conn.query(
+      'SELECT CodigoBarra, Descricao, preco, unvenda FROM supermercado.itens WHERE CodigoBarra = ? AND CodDesativado = 0 LIMIT 1',
+      [req.params.codigoBarras]
+    );
+    if (!rows.length) return res.status(404).json({ error: 'Produto não encontrado' });
+    res.json({
+      codigoBarras: rows[0].CodigoBarra,
+      nome: rows[0].Descricao,
+      preco: Number(rows[0].preco),
+      unidade: rows[0].unvenda
+    });
+  } catch (e) {
+    console.error('[etiquetas-api] erro MySQL:', e.code || e.message);
+    res.status(503).json({ error: 'Erro ao consultar o ERP' });
+  } finally {
+    if (conn) await conn.end().catch(function(){});
+  }
+});
 
 const PORT = process.env.PORT || 3011;
 app.listen(PORT, () => console.log('etiquetas-api rodando na porta ' + PORT));
