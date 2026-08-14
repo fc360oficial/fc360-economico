@@ -619,6 +619,22 @@
         </div>
       </div>
 
+      <div class="modal-bg" id="modal-lote" style="display:none">
+        <div class="modal-box" style="width:460px">
+          <div class="modal-title">Novo lote de etiquetas</div>
+          <div style="display:flex;gap:8px;margin-bottom:10px">
+            <input id="lote-busca-codigo" placeholder="Código de barras" style="flex:1">
+            <button class="btn btn-s btn-sm" onclick="buscarProdutoParaLote()">Buscar</button>
+          </div>
+          <div id="lote-busca-erro" style="color:#b91c1c;font-size:12px;margin-bottom:8px;display:none"></div>
+          <div id="lote-itens-lista" style="max-height:240px;overflow-y:auto;margin-bottom:12px"></div>
+          <div class="btn-row">
+            <button class="btn btn-p" onclick="salvarLote()">Salvar lote</button>
+            <button class="btn btn-s" onclick="document.getElementById('modal-lote').style.display='none'">Cancelar</button>
+          </div>
+        </div>
+      </div>
+
       <!-- RELATÓRIOS -->
       <div id="panel-relatorios" class="panel">
         <!-- 3 abas principais -->

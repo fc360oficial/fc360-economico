@@ -1,5 +1,6 @@
 ﻿// Verificação de versão — roda antes de tudo
 var BUILD = '306';
+var ETIQUETAS_API_URL = 'https://etiquetas-api.SEU-DOMINIO-AQUI.com'; // ajustar quando a API estiver publicada no .254
 (function() {
   var vEl = document.getElementById('sb-versao');
   if (vEl) vEl.textContent = 'v' + BUILD;
@@ -4358,6 +4359,86 @@ function salvarEtiquetasLayout() {
   });
   etiquetasLayoutDoc().set({campos: campos, tamanhoEtiqueta: '72mm', ativo: true}).then(function() {
     showToast('✅ Layout salvo!');
+  });
+}
+
+var _loteItensAtual = [];
+
+function etiquetasLoteCol() {
+  return db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_lote');
+}
+
+function abrirModalNovoLote() {
+  _loteItensAtual = [];
+  document.getElementById('lote-busca-codigo').value = '';
+  document.getElementById('lote-busca-erro').style.display = 'none';
+  renderLoteItensLista();
+  document.getElementById('modal-lote').style.display = 'flex';
+}
+
+function buscarProdutoParaLote() {
+  var codigo = document.getElementById('lote-busca-codigo').value.trim();
+  var erroEl = document.getElementById('lote-busca-erro');
+  erroEl.style.display = 'none';
+  if (!codigo) return;
+  firebase.auth().currentUser.getIdToken().then(function(token) {
+    return fetch(ETIQUETAS_API_URL + '/produto/' + encodeURIComponent(codigo), {
+      headers: {Authorization: 'Bearer ' + token}
+    });
+  }).then(function(resp) {
+    if (resp.status === 404) throw new Error('Produto não encontrado.');
+    if (!resp.ok) throw new Error('Erro ao consultar o ERP.');
+    return resp.json();
+  }).then(function(produto) {
+    _loteItensAtual.push({codigoBarras: produto.codigoBarras, nomeProduto: produto.nome, qtdEtiquetas: 1});
+    document.getElementById('lote-busca-codigo').value = '';
+    renderLoteItensLista();
+  }).catch(function(e) {
+    erroEl.textContent = e.message;
+    erroEl.style.display = 'block';
+  });
+}
+
+function renderLoteItensLista() {
+  var wrap = document.getElementById('lote-itens-lista');
+  if (!_loteItensAtual.length) { wrap.innerHTML = '<div class="empty">Nenhum item adicionado ainda.</div>'; return; }
+  wrap.innerHTML = _loteItensAtual.map(function(item, i) {
+    return '<div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--bd)">'
+      + '<div style="flex:1;font-size:13px">' + item.nomeProduto + '</div>'
+      + '<input type="number" min="1" value="' + item.qtdEtiquetas + '" style="width:60px" onchange="_loteItensAtual[' + i + '].qtdEtiquetas=parseInt(this.value)||1">'
+      + '<button class="btn btn-d btn-sm" onclick="_loteItensAtual.splice(' + i + ',1);renderLoteItensLista()">Remover</button>'
+      + '</div>';
+  }).join('');
+}
+
+function salvarLote() {
+  if (!_loteItensAtual.length) { showToast('Adicione ao menos um item.'); return; }
+  etiquetasLoteCol().add({
+    criadoPor: S.currentUser ? S.currentUser.nome : '-',
+    criadoEm: firebase.firestore.FieldValue.serverTimestamp(),
+    status: 'pendente',
+    itens: _loteItensAtual
+  }).then(function() {
+    document.getElementById('modal-lote').style.display = 'none';
+    renderEtiquetasLotes();
+    showToast('✅ Lote criado!');
+  });
+}
+
+function renderEtiquetasLotes() {
+  var wrap = document.getElementById('etiquetas-lotes-lista');
+  wrap.innerHTML = '<button class="btn btn-p btn-sm" style="margin-bottom:14px" onclick="abrirModalNovoLote()">+ Novo Lote</button><div id="etiquetas-lotes-tabela"><div class="empty">Carregando...</div></div>';
+  etiquetasLoteCol().orderBy('criadoEm', 'desc').limit(50).get().then(function(snap) {
+    var tabela = document.getElementById('etiquetas-lotes-tabela');
+    if (snap.empty) { tabela.innerHTML = '<div class="empty">Nenhum lote criado ainda.</div>'; return; }
+    tabela.innerHTML = '<table class="tbl"><thead><tr><th>Criado em</th><th>Itens</th><th>Status</th></tr></thead><tbody>'
+      + snap.docs.map(function(d) {
+        var l = d.data();
+        var dt = l.criadoEm && l.criadoEm.toDate ? l.criadoEm.toDate().toLocaleString('pt-BR') : '-';
+        var st = l.status === 'concluido' ? '<span class="st st-ok">Concluído</span>' : '<span class="st st-warn">Pendente</span>';
+        return '<tr><td>' + dt + '</td><td>' + (l.itens||[]).length + '</td><td>' + st + '</td></tr>';
+      }).join('')
+      + '</tbody></table>';
   });
 }
 
