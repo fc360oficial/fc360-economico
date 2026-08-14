@@ -4656,6 +4656,13 @@ function _avancarFilaLoteAposImpressao() {
       .update({status: 'concluido'}).then(function() {
         showToast('✅ Lote concluído!');
         renderEtcLotes();
+      }).catch(function(e) {
+        // A fila já terminou de imprimir; só a atualização do status do lote falhou.
+        // Não deixa isso virar o erro genérico de imprimirProximoDaFila (mesmo padrão
+        // do marcador _loggedAlready usado no catch de log acima).
+        showToast('⚠️ Etiquetas impressas, mas não foi possível concluir o lote automaticamente: ' + e.message + '. Não reabra este lote sem verificar no histórico quais itens já foram impressos.');
+        renderEtcLotes();
+        throw { _loggedAlready: true };
       });
   }
   renderFilaLote();
@@ -4663,6 +4670,7 @@ function _avancarFilaLoteAposImpressao() {
 }
 
 function imprimirProximoDaFila() {
+  if (!_loteAtualFila.length) return;
   var produto = _loteAtualFila[0];
   imprimirEtiquetaBluetooth(produto).then(function() {
     return db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_log').add({
