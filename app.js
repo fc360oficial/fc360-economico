@@ -4461,7 +4461,7 @@ function renderEtiquetasLotes() {
       + '</tbody></table>';
   }).catch(function(e) {
     var tabela = document.getElementById('etiquetas-lotes-tabela');
-    if (tabela) tabela.innerHTML = '<div class="empty">Erro ao carregar: ' + e.message + '</div>';
+    if (tabela) tabela.innerHTML = '<div class="empty">Erro ao carregar: ' + _escHtml(e.message) + '</div>';
   });
 }
 
@@ -4646,7 +4646,7 @@ function renderEtcLotes() {
           '</div>';
       }).join('');
     }).catch(function(e) {
-      wrap.innerHTML = '<div class="empty">Erro ao carregar: ' + e.message + '</div>';
+      wrap.innerHTML = '<div class="empty">Erro ao carregar: ' + _escHtml(e.message) + '</div>';
     });
 }
 
@@ -4675,7 +4675,7 @@ function abrirLoteParaImpressao(loteId) {
       });
       renderFilaLote();
     }).catch(function(e) {
-      wrap.innerHTML = '<div class="empty">Erro ao carregar: ' + e.message + '</div>';
+      wrap.innerHTML = '<div class="empty">Erro ao carregar: ' + _escHtml(e.message) + '</div>';
     });
 }
 
@@ -4731,9 +4731,16 @@ function imprimirProximoDaFila() {
     }).then(function() {
       // Impressão e log OK: avança a fila normalmente.
       return _avancarFilaLoteAposImpressao();
-    }).catch(function(e) {
+    }, function(e) {
       // A etiqueta já saiu da impressora — não reimprimir. Avança a fila mesmo
       // com o log falhando, só avisando o operador (mesmo padrão de confirmarImpressaoPontual).
+      // Usa o 2º argumento de .then() (em vez de um .catch() encadeado) para que
+      // este handler só reaja a falhas do próprio etiquetas_log.add() — um
+      // .catch() encadeado depois do .then() acima também capturaria o marcador
+      // _loggedAlready lançado por _avancarFilaLoteAposImpressao() no caminho de
+      // sucesso (quando só a conclusão do lote falha), gerando um segundo toast
+      // enganoso ("erro ao registrar o log: undefined") e uma segunda chamada a
+      // _avancarFilaLoteAposImpressao() reprocessando a fila já vazia.
       showToast('⚠️ Etiqueta impressa, mas houve erro ao registrar o log: ' + e.message);
       return _avancarFilaLoteAposImpressao().then(function() {
         throw { _loggedAlready: true };
