@@ -2,6 +2,7 @@
 // Só faz SELECT no MySQL do ERP (nunca INSERT/UPDATE/DELETE).
 require('dotenv').config({ path: '.env.etiquetas-api' });
 const express = require('express');
+const cors = require('cors');
 const admin = require('firebase-admin');
 const mysql = require('mysql2/promise');
 
@@ -12,10 +13,30 @@ const firestore = admin.firestore();
 
 const app = express();
 
+// O FC360 PWA é servido do GitHub Pages (fc360oficial.github.io), origem
+// diferente desta API — o browser manda preflight OPTIONS em toda chamada
+// autenticada (header Authorization), e sem CORS o Express responde 404,
+// quebrando o fetch() no app. ALLOWED_ORIGIN deve ser configurado por
+// deploy com a(s) origem(ns) real(is) do FC360 em produção — NUNCA usar
+// origin:'*' aqui porque o endpoint é autenticado. Aceita uma lista
+// separada por vírgula para suportar múltiplas origens (ex.: produção +
+// homologação).
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGIN || 'https://fc360oficial.github.io')
+  .split(',').map(function(o) { return o.trim(); }).filter(Boolean);
+app.use(cors({
+  origin: ALLOWED_ORIGINS,
+  methods: ['GET'],
+  allowedHeaders: ['Authorization', 'Content-Type']
+}));
+
 // Verifica o Firebase ID token do operador já logado no FC360, e resolve
 // o clienteId do usuário consultando a mesma coleção `usuarios` que o
 // app.js usa (finalizarLogin, app.js:1285) — não existe custom claim de
 // clienteId no token ainda, então a busca é por e-mail, igual ao app.
+// v1 deste módulo é escopo único-tenant (Econômico) — ver spec §9: extrai
+// clienteId do usuário para evitar expor consulta de preço do ERP sem
+// controle. Por isso não há fallback silencioso para 'economico': um
+// clienteId ausente/desconhecido é rejeitado, não tratado como Econômico.
 async function verificarToken(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
@@ -26,7 +47,10 @@ async function verificarToken(req, res, next) {
       .where('email', '==', (decoded.email || '').toLowerCase())
       .limit(1).get();
     if (snap.empty) return res.status(403).json({ error: 'Usuário não encontrado' });
-    req.clienteId = snap.docs[0].data().clienteId || 'economico';
+    req.clienteId = snap.docs[0].data().clienteId;
+    if (req.clienteId !== 'economico') {
+      return res.status(403).json({ error: 'Módulo não habilitado para este cliente' });
+    }
     next();
   } catch (e) {
     res.status(401).json({ error: 'Token inválido: ' + e.message });
