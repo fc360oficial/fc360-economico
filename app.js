@@ -1875,8 +1875,7 @@ function nav(page, el) {
     switchEtiquetasTab('layout', document.querySelector('#etiquetas-tabs .tab'));
   }
   if (page === 'etiquetas-coleta') {
-    // Nada a carregar aqui: o próprio botão "Conectar na impressora"
-    // (Task 8) dispara o resto do fluxo depois que o operador conecta.
+    switchEtcTab('pontual', document.querySelector('.etc-tabbar-item'));
   }
   if (page==='plano') {
     loadPlanosFromFirebase(function(){
@@ -4506,22 +4505,52 @@ function parearImpressora() {
   }).then(function(chars) {
     _etcWriteChar = chars.filter(function(c){ return c.properties.write || c.properties.writeWithoutResponse; })[0];
     if (!_etcWriteChar) throw new Error('Nenhuma característica de escrita encontrada.');
-    document.getElementById('etc-status-conexao').textContent = '✅ Conectado em ' + _etcDevice.name;
-    document.getElementById('etc-pareamento').style.display = 'none';
-    document.getElementById('etc-operacional').style.display = 'block';
-    switchEtcTab('pontual', document.querySelector('#etc-tabs .tab'));
+    var status = document.getElementById('etc-status-conexao');
+    if (status) status.textContent = '✅ Conectado em ' + _etcDevice.name;
+    _etcAtualizarStatusUI();
   }).catch(function(e) {
-    document.getElementById('etc-status-conexao').textContent = '❌ Erro: ' + e.message;
+    var status = document.getElementById('etc-status-conexao');
+    if (status) status.textContent = '❌ Erro: ' + e.message;
   });
 }
 
+var _etcTabAtual = 'pontual';
+
 function switchEtcTab(tab, btn) {
+  _etcTabAtual = tab;
   document.getElementById('etc-tab-pontual').style.display = tab === 'pontual' ? 'block' : 'none';
   document.getElementById('etc-tab-lotes').style.display = tab === 'lotes' ? 'block' : 'none';
-  document.querySelectorAll('#etc-tabs .tab').forEach(function(t){t.classList.remove('on');});
+  document.getElementById('etc-tab-impressora').style.display = tab === 'impressora' ? 'block' : 'none';
+  document.querySelectorAll('.etc-tabbar-item').forEach(function(t){t.classList.remove('on');});
   if (btn) btn.classList.add('on');
+  _etcAtualizarStatusUI();
   if (tab === 'pontual') renderEtcPontual();
   if (tab === 'lotes') renderEtcLotes();
+  if (tab === 'impressora') renderEtcImpressora();
+}
+
+// Atualiza o pill de status no topbar e a faixa de aviso "conecte a impressora"
+// (só aparece nas abas Coleta/Lotes — na própria aba Impressora seria redundante).
+function _etcAtualizarStatusUI() {
+  var pill = document.getElementById('etc-status-pill');
+  if (pill) {
+    pill.textContent = _etcWriteChar ? '● conectado' : '○ desconectado';
+    pill.className = 'etc-pill ' + (_etcWriteChar ? 'etc-pill-on' : 'etc-pill-off');
+  }
+  var aviso = document.getElementById('etc-aviso-sem-impressora');
+  if (aviso) {
+    aviso.style.display = (!_etcWriteChar && (_etcTabAtual === 'pontual' || _etcTabAtual === 'lotes')) ? 'flex' : 'none';
+  }
+}
+
+function renderEtcImpressora() {
+  var wrap = document.getElementById('etc-tab-impressora');
+  wrap.innerHTML =
+    '<div style="text-align:center;padding:20px 0">' +
+      '<p style="margin-bottom:12px;color:var(--t3);font-size:13px">' + (_etcWriteChar ? 'Impressora conectada.' : 'Conecte na impressora pra poder imprimir.') + '</p>' +
+      '<button class="btn btn-p" onclick="parearImpressora()">' + (_etcWriteChar ? 'Conectar em outra impressora' : 'Conectar na impressora') + '</button>' +
+      '<div id="etc-status-conexao" style="margin-top:10px;font-size:13px"></div>' +
+    '</div>';
 }
 
 // Sanitiza texto interpolado dentro de comandos TSPL: aspas/quebras de linha/
