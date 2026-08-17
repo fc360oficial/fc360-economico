@@ -4587,14 +4587,33 @@ function imprimirEtiquetaBluetooth(produto) {
 // ── Etiquetas: correção pontual (mobile) — scan, prévia, impressão, log ──
 function renderEtcPontual() {
   var wrap = document.getElementById('etc-tab-pontual');
+  // Reaproveita iniciarScanEAN (app.js:12065) — já resolve leitura de câmera
+  // via ZXing no coletor real. Não usar BarcodeDetector nativo (ver Global
+  // Constraints: já tentado e abandonado neste projeto).
+  var btnCamera = (typeof ZXing !== 'undefined')
+    ? '<button class="btn btn-s" style="flex-shrink:0" onclick="iniciarScanEAN(\'etc-input-codigo\')" title="Bipar com a câmera">📷</button>'
+    : '';
   wrap.innerHTML =
-    '<input id="etc-input-codigo" placeholder="Bipe o código de barras" autofocus style="width:100%;padding:14px;font-size:16px;margin-bottom:12px">' +
+    '<div style="display:flex;gap:8px;margin-bottom:12px">' +
+      '<input id="etc-input-codigo" placeholder="Bipe o código de barras" autofocus style="flex:1;padding:14px;font-size:16px">' +
+      btnCamera +
+    '</div>' +
     '<div id="etc-preview"></div>';
   var input = document.getElementById('etc-input-codigo');
   var timer = null;
   input.addEventListener('input', function() {
     clearTimeout(timer);
     timer = setTimeout(function() { buscarProdutoPontual(input.value.trim()); }, 1000);
+  });
+  // iniciarScanEAN preenche o input e dispara um keydown de Enter (não um
+  // evento "input") — sem este listener a busca nunca dispararia após ler
+  // pela câmera. Também beneficia coletores físicos configurados pra enviar
+  // Enter após o código, e digitação manual com Enter.
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      clearTimeout(timer);
+      buscarProdutoPontual(input.value.trim());
+    }
   });
 }
 
