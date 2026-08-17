@@ -72,6 +72,21 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#eef1f5;color:var(--t
 /* PANELS */
 .panel{display:none}.panel.active{display:block}
 
+/* ETIQUETAS COLETA — app shell dedicado (piloto: tela cheia, sem sidebar/topbar) */
+#panel-etiquetas-coleta.active{position:fixed;inset:0;z-index:150;background:var(--w);display:flex;flex-direction:column;padding:0}
+.etc-topbar{display:flex;align-items:center;justify-content:space-between;padding:0 16px;height:56px;border-bottom:1px solid var(--gray2);flex-shrink:0}
+.etc-topbar-back{background:none;border:none;font-family:inherit;font-size:14px;font-weight:600;color:var(--t);cursor:pointer;padding:8px 4px}
+.etc-pill{font-size:11px;font-weight:700;padding:4px 10px;border-radius:20px}
+.etc-pill-on{background:var(--g3);color:var(--g)}
+.etc-pill-off{background:var(--gray);color:var(--t3)}
+.etc-body{flex:1;overflow-y:auto;padding:16px}
+.etc-aviso{background:var(--am2);color:var(--am);font-size:12.5px;padding:10px 14px;border-radius:10px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.etc-aviso a{color:var(--am);font-weight:700;text-decoration:underline;cursor:pointer}
+.etc-tabbar{display:flex;border-top:1px solid var(--gray2);flex-shrink:0}
+.etc-tabbar-item{flex:1;text-align:center;padding:8px 4px 10px;font-size:10.5px;color:var(--t3);cursor:pointer}
+.etc-tabbar-item .ic{font-size:18px;display:block;margin-bottom:2px}
+.etc-tabbar-item.on{color:var(--g);font-weight:700}
+
 /* METRICS */
 .g4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
 .g2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
