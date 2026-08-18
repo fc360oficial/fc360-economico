@@ -17,7 +17,7 @@
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
 
-<link rel="stylesheet" href="style.css?v=309"/>
+<link rel="stylesheet" href="style.css?v=310"/>
 </head>
 <body>
 
@@ -591,10 +591,11 @@
       </div>
 
       <div id="panel-etiquetas" class="panel">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;gap:12px;flex-wrap:wrap">
-          <div><div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:18px;font-weight:700">Etiquetas</div><div style="font-size:13px;color:var(--t3);margin-top:2px">Layout, lotes e histórico de impressão</div></div>
-          <button class="btn btn-s btn-sm" onclick="nav('etiquetas-coleta')">📱 Abrir modo coleta (parear impressora)</button>
+        <div style="margin-bottom:16px">
+          <div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:18px;font-weight:700">Etiquetas</div>
+          <div style="font-size:13px;color:var(--t3);margin-top:2px">Layout, lotes e histórico de impressão</div>
         </div>
+        <button class="btn btn-p" style="width:100%;margin-bottom:16px" onclick="nav('etiquetas-coleta')">📱 Abrir modo coleta (parear impressora e imprimir)</button>
         <div class="tabs" id="etiquetas-tabs" style="margin-bottom:16px">
           <div class="tab on" onclick="switchEtiquetasTab('layout',this)">Layout</div>
           <div class="tab" onclick="switchEtiquetasTab('lotes',this)">Lotes</div>
@@ -1980,7 +1981,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="client.js"></script>
 <script src="qrcode-generator.min.js"></script>
-<script src="app.js?v=309" defer></script>
+<script src="app.js?v=310" defer></script>
 
 
 </body>
