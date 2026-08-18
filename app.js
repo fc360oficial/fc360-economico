@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '314';
+var BUILD = '315';
 var ETIQUETAS_API_URL = 'https://etiquetas-api.SEU-DOMINIO-AQUI.com'; // ajustar quando a API estiver publicada no .254
 (function() {
   var vEl = document.getElementById('sb-versao');
@@ -6876,6 +6876,22 @@ function renderRelRanking(_skipFetch) {
       renderRelRanking(true);
     }).catch(function(){ renderRelRanking(true); });
     return;
+  }
+
+  // Mostra só as abas de perfil que têm gente ativa mandando checklist —
+  // mesmo critério já usado no widget Equipe do Dashboard (app.js ~5828).
+  var _rkAtivos = getUsers().filter(function(u){ return u.ativo && u.checklistAtivo!==false; });
+  var _rkTabs = {op:'operator', gerencia:'gerencia', prevencao:'prevencao'};
+  var _rkPrimeiraVisivel = null;
+  Object.keys(_rkTabs).forEach(function(key){
+    var tem = _rkAtivos.some(function(u){ return u.perfil === _rkTabs[key]; });
+    var tabEl = document.getElementById('rank-tab-'+key);
+    if (tabEl) tabEl.style.display = tem ? '' : 'none';
+    if (tem && !_rkPrimeiraVisivel) _rkPrimeiraVisivel = key;
+  });
+  var _rkAtual = document.querySelector('#rel-cl-ranking .tabs .tab.on');
+  if (_rkAtual && _rkAtual.style.display === 'none' && _rkPrimeiraVisivel) {
+    switchRankView(_rkPrimeiraVisivel === 'op' ? 'operadores' : _rkPrimeiraVisivel, document.getElementById('rank-tab-'+_rkPrimeiraVisivel));
   }
 
   var resultados = getResultados();
