@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '311';
+var BUILD = '312';
 var ETIQUETAS_API_URL = 'https://etiquetas-api.SEU-DOMINIO-AQUI.com'; // ajustar quando a API estiver publicada no .254
 (function() {
   var vEl = document.getElementById('sb-versao');
@@ -5670,7 +5670,7 @@ function renderUsers() {
 function addHist(tipo,desc,setor,stCls,stLabel) {
   var now=new Date();
   var hora=String(now.getHours()).padStart(2,'0')+':'+String(now.getMinutes()).padStart(2,'0');
-  S.historico.unshift({hora,tipo,desc,setor,stCls,stLabel,op:S.currentUser?S.currentUser.nome:'-'});
+  S.historico.unshift({hora,tipo,desc,setor,stCls,stLabel,op:S.currentUser?S.currentUser.nome:'-',perfil:S.currentUser?S.currentUser.perfil:''});
 }
 
 var _dashEquipePerfilAtivo = 'todos';
@@ -6060,10 +6060,11 @@ function updateDash() {
   var tbody=document.getElementById('d-hist');
   var rows=[];
 
-  function _occAvatar(nome) {
+  function _occAvatar(nome, perfil) {
     var ini=(nome||'?').trim().split(/\s+/).slice(0,2).map(function(w){return w[0]?w[0].toUpperCase():'';}).join('');
+    var perfilGrads={gerencia:'linear-gradient(135deg,#3b82f6,#1d4ed8)',supervisor:'linear-gradient(135deg,#8b5cf6,#6d28d9)',prevencao:'linear-gradient(135deg,#f59e0b,#b45309)',operator:'linear-gradient(135deg,#10b981,#047857)',admin:'linear-gradient(135deg,#ef4444,#b91c1c)'};
     var gs=['linear-gradient(135deg,#3b82f6,#1d4ed8)','linear-gradient(135deg,#10b981,#047857)','linear-gradient(135deg,#8b5cf6,#6d28d9)','linear-gradient(135deg,#f59e0b,#b45309)','linear-gradient(135deg,#0d9488,#0891b2)'];
-    var g=gs[Math.abs(nome.split('').reduce(function(h,c){return h*31+c.charCodeAt(0);},0))%gs.length];
+    var g=perfilGrads[perfil]||gs[Math.abs(nome.split('').reduce(function(h,c){return h*31+c.charCodeAt(0);},0))%gs.length];
     return '<div style="display:flex;align-items:center;gap:7px"><div style="width:28px;height:28px;border-radius:50%;background:'+g+';display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;color:#fff;flex-shrink:0">'+ini+'</div><span style="font-size:12px;color:var(--t)">'+nome+'</span></div>';
   }
   function _occTipoBadge(tipo) {
@@ -6080,19 +6081,19 @@ function updateDash() {
         +'<td>'+_occTipoBadge('Checklist')+'</td>'
         +'<td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+r.checklistNome+'</td>'
         +'<td style="font-size:12.5px">'+r.setor+'</td>'
-        +'<td>'+_occAvatar(r.operador)+'</td>'
+        +'<td>'+_occAvatar(r.operador, r.perfil)+'</td>'
         +'<td><span style="font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:20px;background:'+stBg+';color:'+st+'">'+r.pct+'%</span></td>'
         +'<td style="color:var(--t3);font-size:16px;text-align:center">···</td>'
         +'</tr>');
     });
     S.historico.slice(0,5).forEach(function(h){
       if (h.tipo!=='Checklist') {
-        rows.push('<tr><td style="font-size:12.5px;color:var(--t2)">'+h.hora+'</td><td>'+_occTipoBadge(h.tipo)+'</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+h.desc+'</td><td style="font-size:12.5px">'+h.setor+'</td><td>'+_occAvatar(h.op)+'</td><td><span class="st '+h.stCls+'">'+h.stLabel+'</span></td><td style="color:var(--t3);font-size:16px;text-align:center">···</td></tr>');
+        rows.push('<tr><td style="font-size:12.5px;color:var(--t2)">'+h.hora+'</td><td>'+_occTipoBadge(h.tipo)+'</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+h.desc+'</td><td style="font-size:12.5px">'+h.setor+'</td><td>'+_occAvatar(h.op, h.perfil)+'</td><td><span class="st '+h.stCls+'">'+h.stLabel+'</span></td><td style="color:var(--t3);font-size:16px;text-align:center">···</td></tr>');
       }
     });
   } else {
     S.historico.slice(0,8).forEach(function(h){
-      rows.push('<tr><td style="font-size:12.5px;color:var(--t2)">'+h.hora+'</td><td>'+_occTipoBadge(h.tipo)+'</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+h.desc+'</td><td style="font-size:12.5px">'+h.setor+'</td><td>'+_occAvatar(h.op)+'</td><td><span class="st '+h.stCls+'">'+h.stLabel+'</span></td><td style="color:var(--t3);font-size:16px;text-align:center">···</td></tr>');
+      rows.push('<tr><td style="font-size:12.5px;color:var(--t2)">'+h.hora+'</td><td>'+_occTipoBadge(h.tipo)+'</td><td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+h.desc+'</td><td style="font-size:12.5px">'+h.setor+'</td><td>'+_occAvatar(h.op, h.perfil)+'</td><td><span class="st '+h.stCls+'">'+h.stLabel+'</span></td><td style="color:var(--t3);font-size:16px;text-align:center">···</td></tr>');
     });
   }
 
