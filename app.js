@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '312';
+var BUILD = '313';
 var ETIQUETAS_API_URL = 'https://etiquetas-api.SEU-DOMINIO-AQUI.com'; // ajustar quando a API estiver publicada no .254
 (function() {
   var vEl = document.getElementById('sb-versao');
@@ -8213,6 +8213,150 @@ function toggleAtivoCliente(id, ativar) {
   }).catch(function(e){ showToast('⚠ Erro: ' + e.message); });
 }
 
+// ── Superadmin: exclusão completa e irreversível de um cliente ───────────────
+// Só chamável com o cliente já desativado (ver botão em _renderClientesLista).
+function _batchDeleteDocs(docRefs) {
+  var chunks = [];
+  for (var i=0; i<docRefs.length; i+=400) chunks.push(docRefs.slice(i,i+400));
+  return chunks.reduce(function(p, chunk) {
+    return p.then(function() {
+      var b = db.batch();
+      chunk.forEach(function(ref){ b.delete(ref); });
+      return b.commit();
+    });
+  }, Promise.resolve());
+}
+
+function _baixarBackupJSON(c, dump) {
+  try {
+    var blob = new Blob([JSON.stringify(dump, null, 2)], {type:'application/json'});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = 'backup-'+c.id+'-'+new Date().toISOString().slice(0,10)+'.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function(){ URL.revokeObjectURL(url); }, 5000);
+  } catch(e) { console.error('Falha ao gerar backup local', e); }
+}
+
+function _apagarRepoGithub(clienteId) {
+  return db.collection('config').doc('superadmin').get().then(function(doc) {
+    var cfg = doc.data() || {};
+    var token = cfg.githubToken, org = cfg.githubOrg;
+    if (!token || !org) return Promise.reject(new Error('Config GitHub ausente (config/superadmin).'));
+    return db.collection('config').doc('repos').get().then(function(rdoc) {
+      var repoName = rdoc.exists ? rdoc.data()[clienteId] : null;
+      if (!repoName) return Promise.reject(new Error('Repositório não configurado para: '+clienteId));
+      return fetch('https://api.github.com/repos/'+org+'/'+repoName, {
+        method: 'DELETE',
+        headers: { 'Authorization': 'token '+token, 'Accept': 'application/vnd.github+json' }
+      }).then(function(resp) {
+        if (resp.status === 204 || resp.status === 404) return true;
+        if (resp.status === 403) throw new Error('Token sem permissão delete_repo. Adicione esse escopo em config/superadmin.githubToken e apague manualmente: github.com/'+org+'/'+repoName);
+        return resp.text().then(function(t){ throw new Error('GitHub respondeu '+resp.status+': '+t); });
+      });
+    });
+  });
+}
+
+function excluirClienteCompleto(id) {
+  var c = _clientesCache.find(function(x){ return x.id === id; });
+  if (!c) return;
+  if (c.ativo !== false) { alert('Desative o cliente antes de excluir.'); return; }
+  if (id === 'fluxocerto') { alert('Não é possível excluir o repositório base.'); return; }
+
+  var msg = 'EXCLUIR PERMANENTEMENTE o cliente "'+c.nome+'"?\n\n'
+    + 'Vai apagar TODOS os dados (usuários, checklists, inventários, planos, relatórios, fotos, etiquetas, tokens) e o repositório no GitHub.\n\n'
+    + 'NÃO TEM VOLTA. Um backup em JSON é baixado antes de apagar.\n\nConfirma?';
+  if (!confirm(msg)) return;
+
+  showToast('⏳ Excluindo "'+c.nome+'"... isso pode levar um tempo');
+  var dump = { cliente: c, coletadoEm: new Date().toISOString() };
+  var allRefs = [];
+
+  db.collection('usuarios').where('clienteId','==',id).get()
+    .then(function(snap) {
+      dump.usuarios = snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+      snap.docs.forEach(function(d){ allRefs.push(d.ref); });
+      var userIds = snap.docs.map(function(d){ return d.id; });
+      return Promise.all(['inventarios','checkstates','fotos'].map(function(col) {
+        return Promise.all(userIds.map(function(uid) {
+          return db.collection(col).where('userId','==',uid).get();
+        })).then(function(snaps) {
+          var docs = [].concat.apply([], snaps.map(function(s){ return s.docs; }));
+          dump[col] = docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+          docs.forEach(function(d){ allRefs.push(d.ref); });
+        });
+      }));
+    })
+    .then(function() {
+      return db.collection('inv_inventarios').where('clienteId','==',id).get();
+    })
+    .then(function(snap) {
+      dump.inv_inventarios = snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+      snap.docs.forEach(function(d){ allRefs.push(d.ref); });
+      var invIds = snap.docs.map(function(d){ return d.id; });
+      return Promise.all(['inv_bipagens','inv_catalogo','inv_auditlog'].map(function(col) {
+        return Promise.all(invIds.map(function(invId) {
+          return db.collection(col).where('invId','==',invId).get();
+        })).then(function(snaps) {
+          var docs = [].concat.apply([], snaps.map(function(s){ return s.docs; }));
+          dump[col] = docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+          docs.forEach(function(d){ allRefs.push(d.ref); });
+        });
+      }));
+    })
+    .then(function() {
+      var diretas = ['resultados','checklists','planos','perdas','contagens','tokens'];
+      return Promise.all(diretas.map(function(col) {
+        return db.collection(col).where('clienteId','==',id).get().then(function(snap) {
+          dump[col] = snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+          snap.docs.forEach(function(d){ allRefs.push(d.ref); });
+        });
+      }));
+    })
+    .then(function() {
+      var subs = ['fornecedores','etiquetas_layout','etiquetas_log','etiquetas_lote'];
+      return Promise.all(subs.map(function(sub) {
+        return db.collection('clientes').doc(id).collection(sub).get().then(function(snap) {
+          dump[sub] = snap.docs.map(function(d){ return Object.assign({id:d.id}, d.data()); });
+          snap.docs.forEach(function(d){ allRefs.push(d.ref); });
+        });
+      }));
+    })
+    .then(function() {
+      _baixarBackupJSON(c, dump);
+      return _batchDeleteDocs(allRefs);
+    })
+    .then(function() {
+      return db.collection('config').doc('repos').get();
+    })
+    .then(function(doc) {
+      if (doc.exists && doc.data()[id] !== undefined) {
+        var upd = {}; upd[id] = firebase.firestore.FieldValue.delete();
+        return db.collection('config').doc('repos').update(upd);
+      }
+    })
+    .then(function() {
+      return db.collection('clientes').doc(id).delete();
+    })
+    .then(function() {
+      _clientesCache = _clientesCache.filter(function(x){ return x.id !== id; });
+      _renderClientesLista();
+      showToast('✅ Dados de "'+c.nome+'" excluídos. Apagando repositório no GitHub...');
+      return _apagarRepoGithub(id).then(function() {
+        showToast('✅ Cliente "'+c.nome+'" excluído por completo, incluindo o repositório.');
+      }).catch(function(e) {
+        showToast('⚠ Dados apagados com sucesso, mas o repositório GitHub NÃO foi removido: ' + e.message);
+      });
+    })
+    .catch(function(e) {
+      showToast('❌ Erro ao excluir dados: ' + e.message);
+    });
+}
+
 // ── Superadmin: entrar operacionalmente como um cliente ──────────────────────
 var _superadminOriginal = null;
 
@@ -8365,6 +8509,7 @@ function _renderClientesLista() {
         '<button class="btn btn-sm" id="btn-deploy-'+safeId+'" style="background:#2d6a2d;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="deployCliente(\''+safeId+'\')">🚀 Deploy</button>' +
         (c.id === 'fluxocerto' ? '' : (inativo
           ? '<button class="btn btn-sm" style="background:#1a5c34;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="toggleAtivoCliente(\''+safeId+'\',true)">✅ Reativar</button>'
+          + '<button class="btn btn-sm" style="background:#b91c1c;color:#fff;border:none;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="excluirClienteCompleto(\''+safeId+'\')">🗑️ Excluir</button>'
           : '<button class="btn btn-sm" style="background:#fff;color:#c0392b;border:1.5px solid #f5c6c0;padding:6px 14px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;font-family:inherit" onclick="toggleAtivoCliente(\''+safeId+'\',false)">🚫 Desativar</button>')) +
       '</div>' +
     '</div>';
