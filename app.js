@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '308';
+var BUILD = '309';
 var ETIQUETAS_API_URL = 'https://etiquetas-api.SEU-DOMINIO-AQUI.com'; // ajustar quando a API estiver publicada no .254
 (function() {
   var vEl = document.getElementById('sb-versao');
@@ -1830,6 +1830,7 @@ var PAGE_TITLES = {
 
 function nav(page, el) {
   if (page !== 'capa') document.body.style.removeProperty('overflow');
+  _etcModoImprimirTudo = false;
   _atualizarBadgeNotificacoes();
   sessionStorage.setItem('eco_last_page', page);
   localStorage.setItem('eco_last_page', page); // fallback para PWA fechado/reaberto
@@ -4506,8 +4507,14 @@ function parearImpressora() {
     _etcWriteChar = chars.filter(function(c){ return c.properties.write || c.properties.writeWithoutResponse; })[0];
     if (!_etcWriteChar) throw new Error('Nenhuma característica de escrita encontrada.');
     var status = document.getElementById('etc-status-conexao');
-    if (status) status.textContent = '✅ Conectado em ' + _etcDevice.name;
+    if (status) status.textContent = '✅ Conectado em ' + (_etcDevice.name || 'impressora');
     _etcAtualizarStatusUI();
+    _etcDevice.addEventListener('gattserverdisconnected', function() {
+      _etcWriteChar = null;
+      _etcModoImprimirTudo = false;
+      _etcAtualizarStatusUI();
+      if (_etcTabAtual === 'lotes' && _loteAtualFila.length) renderFilaLote();
+    });
   }).catch(function(e) {
     var status = document.getElementById('etc-status-conexao');
     if (status) status.textContent = '❌ Erro: ' + e.message;
@@ -4517,6 +4524,9 @@ function parearImpressora() {
 var _etcTabAtual = 'pontual';
 
 function switchEtcTab(tab, btn) {
+  if (_etcTabAtual === 'lotes' && tab !== 'lotes' && _etcModoImprimirTudo) {
+    _etcModoImprimirTudo = false;
+  }
   _etcTabAtual = tab;
   document.getElementById('etc-tab-pontual').style.display = tab === 'pontual' ? 'block' : 'none';
   document.getElementById('etc-tab-lotes').style.display = tab === 'lotes' ? 'block' : 'none';
