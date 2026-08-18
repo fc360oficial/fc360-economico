@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '310';
+var BUILD = '311';
 var ETIQUETAS_API_URL = 'https://etiquetas-api.SEU-DOMINIO-AQUI.com'; // ajustar quando a API estiver publicada no .254
 (function() {
   var vEl = document.getElementById('sb-versao');
@@ -1729,7 +1729,7 @@ function setupRole() {
   show('nav-inv-gestao', isAdmin && !isColetor && _moduloAtivo('inventario'));
   show('nav-inv-coleta', false);
   show('nav-capa', true);
-  var mostrarEmBreve = isAdmin || r==='gerencia' || isSup;
+  var mostrarEmBreve = false; // vitrine "Em Breve" desativada a pedido do Tiago (2026-08-18); reativar trocando pra: isAdmin || r==='gerencia' || isSup
   show('sb-embreve-sec', mostrarEmBreve);
   show('nav-embreve-promotores', mostrarEmBreve);
   show('nav-embreve-pesquisa', mostrarEmBreve);
