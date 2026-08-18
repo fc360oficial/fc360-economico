@@ -4700,6 +4700,8 @@ function renderEtcLotes() {
 }
 
 var _loteAtualId = null, _loteAtualFila = [];
+var _etcModoImprimirTudo = false; // true durante o loop automático de "Imprimir tudo"
+var _etcFilaTotal = 0; // tamanho da fila no início do "Imprimir tudo", pro contador "X de Y"
 
 function abrirLoteParaImpressao(loteId) {
   _loteAtualId = loteId;
@@ -4765,13 +4767,23 @@ function _avancarFilaLoteAposImpressao() {
   return Promise.resolve();
 }
 
+// Imprime UM item da fila. Se _etcModoImprimirTudo estiver ativo e a
+// impressão desse item for bem-sucedida, se reagenda automaticamente pro
+// próximo item (com um pequeno intervalo, pra não sobrecarregar o buffer do
+// K329) — é o mesmo código usado tanto pro clique manual "Imprimir próxima"
+// quanto pelo loop automático de "Imprimir tudo".
 function imprimirProximoDaFila() {
-  if (!_loteAtualFila.length) return;
+  if (!_loteAtualFila.length) { _etcModoImprimirTudo = false; return; }
   if (_etcImprimindo) return;
   _etcImprimindo = true;
-  var btn = document.querySelector('#etc-tab-lotes button.btn-p');
-  if (btn) btn.disabled = true;
+  var btns = document.querySelectorAll('#etc-tab-lotes .btn-row .btn');
+  btns.forEach(function(b){ b.disabled = true; });
+  if (_etcModoImprimirTudo) {
+    var progresso = document.getElementById('etc-fila-progresso');
+    if (progresso) progresso.textContent = 'Imprimindo ' + (_etcFilaTotal - _loteAtualFila.length + 1) + ' de ' + _etcFilaTotal + '...';
+  }
   var produto = _loteAtualFila[0];
+  var erroReal = false;
   imprimirEtiquetaBluetooth(produto).then(function() {
     return db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_log').add({
       codigoBarras: produto.codigoBarras,
@@ -4802,13 +4814,36 @@ function imprimirProximoDaFila() {
     });
   }).catch(function(e) {
     if (e && e._loggedAlready) return;
+    erroReal = true;
     showToast('❌ Erro ao imprimir: ' + e.message + ' (fila mantida, tente de novo)');
   }).then(function() {
     // Roda sempre (sucesso ou erro tratado acima) — equivalente a um "finally"
     // nesta cadeia baseada em .then()/.catch() sem async/await.
     _etcImprimindo = false;
-    if (btn) btn.disabled = false;
+    if (erroReal) {
+      // Erro real de impressão: para o loop (se houver) e reabilita os
+      // botões — como _avancarFilaLoteAposImpressao() não rodou, a fila
+      // continua com os mesmos itens (nenhum foi consumido).
+      _etcModoImprimirTudo = false;
+      renderFilaLote();
+      return;
+    }
+    if (_etcModoImprimirTudo && _loteAtualFila.length) {
+      setTimeout(imprimirProximoDaFila, 300);
+    } else {
+      _etcModoImprimirTudo = false;
+    }
   });
+}
+
+// Dispara a impressão de toda a fila do lote, um item por vez, com um
+// pequeno intervalo entre eles. Reaproveita imprimirProximoDaFila (só liga
+// o modo automático antes de disparar o primeiro item).
+function imprimirTudoDaFila() {
+  if (!_loteAtualFila.length || _etcImprimindo) return;
+  _etcModoImprimirTudo = true;
+  _etcFilaTotal = _loteAtualFila.length;
+  imprimirProximoDaFila();
 }
 
 function renderCentralAtual() {
