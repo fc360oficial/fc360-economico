@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '313';
+var BUILD = '314';
 var ETIQUETAS_API_URL = 'https://etiquetas-api.SEU-DOMINIO-AQUI.com'; // ajustar quando a API estiver publicada no .254
 (function() {
   var vEl = document.getElementById('sb-versao');
@@ -1715,6 +1715,7 @@ function setupRole() {
   show('nav-dashboard', (isAdmin || isSup) && !isColetor);
   show('nav-central', (isAdmin || isSup) && !isColetor && _moduloAtivo('central'));
   show('nav-etiquetas', (isAdmin || isSup) && !isColetor && _moduloAtivo('etiquetas'));
+  show('sb-etiquetas-sec', (isAdmin || isSup) && !isColetor && _moduloAtivo('etiquetas'));
   show('nav-relat', (isAdmin || isSup || r==='gerencia') && !isColetor);
   show('nav-assistente', isAdmin && _moduloAtivo('assistente_ia'));
   show('nav-monitor', isAdmin && _moduloAtivo('monitor'));
