@@ -4630,11 +4630,12 @@ function buscarProdutoPontual(codigo) {
     if (!resp.ok) throw new Error('Erro ao consultar o ERP.');
     return resp.json();
   }).then(function(produto) {
+    var disabledAttr = _etcWriteChar ? '' : 'disabled title="Conecte a impressora primeiro"';
     preview.innerHTML =
       '<div class="card" style="padding:16px">' +
         '<div style="font-weight:700;margin-bottom:4px">' + _escHtml(produto.nome) + '</div>' +
         '<div style="font-size:20px;color:var(--pri);font-weight:800;margin-bottom:12px">R$ ' + produto.preco.toFixed(2) + '</div>' +
-        '<button class="btn btn-p" style="width:100%" onclick="confirmarImpressaoPontual(' + _escHtml(JSON.stringify(produto)) + ')">Imprimir etiqueta</button>' +
+        '<button class="btn btn-p" style="width:100%" ' + disabledAttr + ' onclick="confirmarImpressaoPontual(' + _escHtml(JSON.stringify(produto)) + ')">Imprimir etiqueta</button>' +
       '</div>';
   }).catch(function(e) {
     preview.innerHTML = '<div class="empty">' + _escHtml(e.message) + '</div>';
@@ -4733,8 +4734,13 @@ function renderFilaLote() {
     wrap.innerHTML = '<div class="empty">Fila vazia ou todos os produtos falharam ao resolver.</div><button class="btn btn-s btn-sm" onclick="renderEtcLotes()">Voltar</button>';
     return;
   }
+  var disabledAttr = _etcWriteChar ? '' : 'disabled title="Conecte a impressora primeiro"';
   wrap.innerHTML = '<div style="margin-bottom:10px">Restam ' + _loteAtualFila.length + ' etiquetas.</div>' +
-    '<button class="btn btn-p" style="width:100%" onclick="imprimirProximoDaFila()">Imprimir próxima</button>';
+    '<div class="btn-row">' +
+      '<button class="btn btn-p" style="flex:1" ' + disabledAttr + ' onclick="imprimirProximoDaFila()">Imprimir próxima</button>' +
+      '<button class="btn btn-s" style="flex:1" ' + disabledAttr + ' onclick="imprimirTudoDaFila()">Imprimir tudo</button>' +
+    '</div>' +
+    '<div id="etc-fila-progresso" style="margin-top:10px;font-size:12.5px;color:var(--t3)"></div>';
 }
 
 // Avança a fila (item já foi fisicamente impresso, o log pode ou não ter sido gravado)
