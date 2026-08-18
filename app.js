@@ -4829,6 +4829,13 @@ function imprimirProximoDaFila() {
       return;
     }
     if (_etcModoImprimirTudo && _loteAtualFila.length) {
+      // _avancarFilaLoteAposImpressao() já rodou renderFilaLote() acima,
+      // que reabilita os botões no DOM. Como _etcImprimindo já é false
+      // neste ponto (guard não protege mais) e o próximo item só dispara
+      // daqui a 300ms, redesabilita os botões agora, na mesma tick, pra
+      // não deixar uma janela real de clique válido nesse intervalo.
+      var btnsAgain = document.querySelectorAll('#etc-tab-lotes .btn-row .btn');
+      btnsAgain.forEach(function(b){ b.disabled = true; });
       setTimeout(imprimirProximoDaFila, 300);
     } else {
       _etcModoImprimirTudo = false;
