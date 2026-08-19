@@ -1,6 +1,6 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '315';
-var ETIQUETAS_API_URL = 'https://etiquetas-api.SEU-DOMINIO-AQUI.com'; // ajustar quando a API estiver publicada no .254
+var BUILD = '316';
+var ETIQUETAS_API_URL = 'https://attention-memories-jeff-ntsc.trycloudflare.com'; // TEMP: túnel de teste local, não commitar
 (function() {
   var vEl = document.getElementById('sb-versao');
   if (vEl) vEl.textContent = 'v' + BUILD;
@@ -1871,6 +1871,17 @@ function nav(page, el) {
     loadResultadosFromFirebase(function(){
       gerarPillsMesCentral();
       switchCentralTab('checklist', document.querySelector('#central-tabs .tab'));
+    });
+  }
+  if (page==='checklist') {
+    // Recarrega planos do Firebase toda vez que entra no Checklist — sem isso,
+    // um app instalado que fica aberto por dias/semanas nunca aprende que um
+    // plano foi resolvido em outro dispositivo, e o banner de "vencido" continua
+    // bloqueando o envio com um plano já concluído há muito tempo (bug real:
+    // ver project_fc360-plano-acao-vencido-bug na memória).
+    loadPlanosFromFirebase(function(){
+      renderAlertaPlanos();
+      atualizarBadgePlano();
     });
   }
   if (page === 'etiquetas') {
