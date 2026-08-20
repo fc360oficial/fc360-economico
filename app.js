@@ -4585,8 +4585,6 @@ function renderEtcImpressora() {
     '<p style="margin-top:14px;font-size:12px;color:var(--t3);text-align:center">Mantenha a impressora ligada e próxima ao dispositivo para garantir a conexão.</p>';
 }
 
-// Renderiza só os 4 cards do hub. Task 4 substitui esta função inteira pra
-// adicionar a lista "Últimas impressões" logo abaixo.
 function renderEtcHub() {
   var wrap = document.getElementById('etc-view-hub');
   var statusImpressora = _etcWriteChar ? '● Conectada' : '○ Desconectada';
@@ -4610,7 +4608,49 @@ function renderEtcHub() {
         '<div class="etc-hub-card-body"><div class="etc-hub-card-title">Impressora</div><div class="etc-hub-card-desc">Conecte e gerencie a impressora Bluetooth</div></div>' +
         '<span class="etc-pill ' + statusCls + '">' + statusImpressora + '</span>' +
       '</div>' +
-    '</div>';
+    '</div>' +
+    '<div class="etc-hub-recent"><div class="etc-hub-recent-title">Últimas impressões</div><div id="etc-hub-recent-list"><div class="empty">Carregando...</div></div></div>';
+  db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_log')
+    .orderBy('timestamp', 'desc').limit(30).get().then(function(snap) {
+      var listWrap = document.getElementById('etc-hub-recent-list');
+      if (!listWrap) return;
+      if (snap.empty) { listWrap.innerHTML = '<div class="empty">Nenhuma impressão registrada ainda.</div>'; return; }
+      // Agrupa entradas consecutivas do mesmo produto + mesma origem (lote
+      // ou pontual) em um "evento de impressão" com contagem — cada etiqueta
+      // física gera 1 doc em etiquetas_log, então imprimir 20 cópias de uma
+      // vez gera 20 docs seguidos que devem aparecer como uma linha só "20".
+      var grupos = [];
+      snap.docs.forEach(function(d) {
+        var l = d.data();
+        var chave = (l.loteId || 'pontual') + '|' + l.nomeProduto;
+        var ultimo = grupos[grupos.length - 1];
+        if (ultimo && ultimo.chave === chave) {
+          ultimo.qtd++;
+        } else {
+          grupos.push({chave: chave, nome: l.nomeProduto, timestamp: l.timestamp, qtd: 1});
+        }
+      });
+      listWrap.innerHTML = grupos.slice(0, 5).map(function(g) {
+        var quando = g.timestamp ? _etcFormatarRelativo(g.timestamp.toDate()) : '-';
+        return '<div class="etc-hub-recent-item">' +
+          '<div><div class="etc-hub-recent-name">' + _escHtml(g.nome) + '</div><div class="etc-hub-recent-meta">' + quando + '</div></div>' +
+          '<div class="etc-hub-recent-qtd">' + g.qtd + '</div>' +
+        '</div>';
+      }).join('');
+    }).catch(function(e) {
+      var listWrap = document.getElementById('etc-hub-recent-list');
+      if (listWrap) listWrap.innerHTML = '<div class="empty">Erro ao carregar: ' + _escHtml(e.message) + '</div>';
+    });
+}
+
+function _etcFormatarRelativo(data) {
+  var hoje = new Date(); hoje.setHours(0,0,0,0);
+  var ontem = new Date(hoje); ontem.setDate(ontem.getDate() - 1);
+  var d = new Date(data); d.setHours(0,0,0,0);
+  var hora = data.toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+  if (d.getTime() === hoje.getTime()) return 'Hoje, ' + hora;
+  if (d.getTime() === ontem.getTime()) return 'Ontem, ' + hora;
+  return data.toLocaleDateString('pt-BR') + ', ' + hora;
 }
 
 // Sanitiza texto interpolado dentro de comandos TSPL: aspas/quebras de linha/
