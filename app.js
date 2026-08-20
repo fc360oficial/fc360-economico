@@ -4932,7 +4932,7 @@ function _etcRenderListaLote() {
         '<div class="etc-check-item-name">' + _escHtml(p.nome) + '</div>' +
         '<div class="etc-check-item-meta">Código: ' + _escHtml(p.codigoBarras) + ' · R$ ' + p.preco.toFixed(2) + '</div>' +
       '</div>' +
-      '<input type="number" class="etc-check-item-qtd" min="1" value="' + qtd + '" ' + (sel ? '' : 'disabled') + ' onchange="_etcAtualizarQtdLoteItem(\'' + p.codigoBarras + '\', this.value)">' +
+      '<input type="number" class="etc-check-item-qtd" min="1" value="' + qtd + '" ' + (sel ? '' : 'disabled') + ' onchange="_etcAtualizarQtdLoteItem(\'' + _escHtml(p.codigoBarras) + '\', this.value)">' +
     '</div>';
   }).join('');
 }
