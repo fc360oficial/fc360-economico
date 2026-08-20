@@ -4753,6 +4753,7 @@ function renderEtcAvulsa() {
 function buscarProdutoAvulsa(codigo) {
   if (!codigo) return;
   _etcAvulsaQtd = 1;
+  _etcAvulsaProdutoAtual = null;
   var preview = document.getElementById('etc-avulsa-preview');
   preview.innerHTML = '<div class="empty">Buscando...</div>';
   firebase.auth().currentUser.getIdToken().then(function(token) {
@@ -5023,7 +5024,6 @@ function _etcAtualizarBarraLote() {
 function _etcGerarLoteMock() {
   var itens = Object.keys(_etcLoteSelecionados).map(function(k) { return _etcLoteSelecionados[k]; });
   if (!itens.length) return;
-  _loteAtualId = null;
   var wrap = document.getElementById('etc-view-lote');
   wrap.innerHTML = '<div class="empty">Resolvendo preços...</div>';
   firebase.auth().currentUser.getIdToken().then(function(token) {
@@ -5034,6 +5034,12 @@ function _etcGerarLoteMock() {
         .then(function(produtoReal) { return {item: it, produto: produtoReal}; });
     }));
   }).then(function(resolvidos) {
+    // _loteAtualId só é zerado aqui, junto com a reconstrução da fila, pra
+    // nunca deixar os dois fora de sincronia — se o fetch falhar antes disso
+    // (catch abaixo), um _loteAtualId/_loteAtualFila REAIS deixados por um
+    // abrirLoteParaImpressao anterior permanecem intactos e consistentes,
+    // em vez de virar um id nulo com fila de um lote real (ver Fix C).
+    _loteAtualId = null;
     _loteAtualFila = [];
     resolvidos.forEach(function(r) {
       if (!r.produto) return;
@@ -5041,7 +5047,7 @@ function _etcGerarLoteMock() {
     });
     renderFilaLote();
   }).catch(function(e) {
-    wrap.innerHTML = '<div class="empty">Erro ao carregar: ' + _escHtml(e.message) + '</div>';
+    wrap.innerHTML = '<div class="empty">Erro ao carregar: ' + _escHtml(e.message) + '</div><button class="btn btn-s btn-sm" onclick="renderEtcLotes()">Voltar</button>';
   });
 }
 
