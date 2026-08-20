@@ -4565,10 +4565,32 @@ function parearImpressora() {
 // Re-renderiza a view atual quando o estado da impressora muda (conectou,
 // desconectou) — cada view decide sozinha o que fazer com _etcWriteChar
 // (desabilitar botão, mostrar aviso, etc.), esta função só dispara o redraw.
+//
+// avulsa e lote recebem tratamento especial: um redraw cego (chamar
+// renderEtcAvulsa()/renderEtcLotes() direto) reconstrói a tela do zero e
+// descarta estado em memória que não sobrevive a um re-render completo — o
+// card de produto escaneado na Avulsa, ou a seleção em andamento no
+// construtor "Montar novo lote". Nenhuma dessas duas telas de conteúdo
+// (card da Avulsa, construtor do Lote) de fato exibe UI dependente de
+// _etcWriteChar, então é seguro pular o redraw cego nesses casos.
 function _etcAtualizarStatusUI() {
   if (_etcCurrentView === 'hub') renderEtcHub();
-  else if (_etcCurrentView === 'avulsa') renderEtcAvulsa();
-  else if (_etcCurrentView === 'lote') renderEtcLotes();
+  else if (_etcCurrentView === 'avulsa') {
+    // Produto carregado: re-renderiza só o card (não depende de _etcWriteChar
+    // e preserva o produto/quantidade). Sem produto: tela em branco, redraw
+    // completo é seguro (só recria input vazio + aviso de impressora).
+    if (_etcAvulsaProdutoAtual) _etcRenderAvulsaCard(_etcAvulsaProdutoAtual);
+    else renderEtcAvulsa();
+  }
+  else if (_etcCurrentView === 'lote') {
+    // Fila de impressão ativa: já tratada à parte (ver linha dedicada no
+    // handler gattserverdisconnected de parearImpressora) — não mexe aqui.
+    // Construtor "Montar novo lote" em andamento: não tem UI dependente da
+    // impressora, então redesenhar só jogaria a seleção do operador fora.
+    // Só o caso restante (tela de lotes pendentes) é seguro redesenhar —
+    // ela sim mostra o aviso "Conecte a impressora antes de imprimir".
+    if (!_loteAtualFila.length && !_etcMontandoLote) renderEtcLotes();
+  }
   else if (_etcCurrentView === 'impressora') renderEtcImpressora();
   else if (_etcCurrentView === 'preview' && _etcPreviewProduto) renderEtcPreview(_etcPreviewProduto, _etcPreviewQtd);
 }
@@ -4686,8 +4708,14 @@ function imprimirEtiquetaBluetooth(produto) {
 
 // ── Etiquetas: Etiqueta Avulsa (mobile) — scan, prévia, quantidade ──
 var _etcAvulsaQtd = 1;
+// Produto atualmente carregado no card da Avulsa (null = tela em branco,
+// aguardando bipagem). Usado por _etcAtualizarStatusUI pra re-renderizar só
+// o card em vez da tela inteira quando o status da impressora muda, sem
+// descartar o produto escaneado.
+var _etcAvulsaProdutoAtual = null;
 
 function renderEtcAvulsa() {
+  _etcAvulsaProdutoAtual = null;
   var wrap = document.getElementById('etc-view-avulsa');
   // Reaproveita iniciarScanEAN (já resolve leitura de câmera via ZXing no
   // coletor real). Não usar BarcodeDetector nativo (ver Global Constraints).
@@ -4744,6 +4772,7 @@ function buscarProdutoAvulsa(codigo) {
 // (re-render simples, sem estado por-elemento; o projeto já usa esse padrão
 // em outras telas do módulo).
 function _etcRenderAvulsaCard(produto) {
+  _etcAvulsaProdutoAtual = produto;
   var preview = document.getElementById('etc-avulsa-preview');
   var produtoJson = _escHtml(JSON.stringify(produto));
   preview.innerHTML =
@@ -4855,6 +4884,7 @@ function confirmarImpressaoAvulsa(produto, qtdTotal) {
 // v1) e oferece "+ Montar novo lote" como caminho alternativo mobile (novo
 // nesta rodada) — os dois convivem, nenhum substitui o outro.
 function renderEtcLotes() {
+  _etcMontandoLote = false;
   var wrap = document.getElementById('etc-view-lote');
   wrap.innerHTML =
     '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="abrirEtcHub(\'hub\')">← Etiquetas e Consulta</button></div>' +
@@ -4895,6 +4925,11 @@ var ETC_MOCK_PRODUTOS = [
 ];
 
 var _etcLoteSelecionados = {}; // codigoBarras -> {produto, qtd}
+// true enquanto o construtor "Montar novo lote" (busca/filtro/checkbox) está
+// na tela. Essa tela não tem nenhuma UI dependente de _etcWriteChar — usado
+// por _etcAtualizarStatusUI pra não descartar a seleção em andamento quando
+// o status da impressora muda (ver renderEtcMontarLote/renderEtcLotes/renderFilaLote).
+var _etcMontandoLote = false;
 
 function _etcFiltrosUnicos(campo) {
   var vistos = {}, out = [];
@@ -4904,6 +4939,7 @@ function _etcFiltrosUnicos(campo) {
 
 function renderEtcMontarLote() {
   _etcLoteSelecionados = {};
+  _etcMontandoLote = true;
   var wrap = document.getElementById('etc-view-lote');
   wrap.innerHTML =
     '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="renderEtcLotes()">← Lotes pendentes</button></div>' +
@@ -5039,6 +5075,7 @@ function abrirLoteParaImpressao(loteId) {
 }
 
 function renderFilaLote() {
+  _etcMontandoLote = false;
   var wrap = document.getElementById('etc-view-lote');
   if (!_loteAtualFila.length) {
     wrap.innerHTML = '<div class="empty">Fila vazia ou todos os produtos falharam ao resolver.</div><button class="btn btn-s btn-sm" onclick="renderEtcLotes()">Voltar</button>';
