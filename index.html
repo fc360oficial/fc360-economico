@@ -16,6 +16,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/JsBarcode/3.11.5/JsBarcode.all.min.js"></script>
 
 <link rel="stylesheet" href="style.css?v=310"/>
 </head>
@@ -1214,25 +1215,18 @@
         <div id="inv-coleta-wrap"></div>
       </div><!-- /panel-inv-coleta -->
 
-      <!-- === FC360 ETIQUETAS — COLETA (mobile, app shell dedicado) === -->
+      <!-- === FC360 ETIQUETAS E CONSULTA — COLETA (mobile, hub de 4 cards) === -->
       <div id="panel-etiquetas-coleta" class="panel">
         <div class="etc-topbar">
           <button class="etc-topbar-back" onclick="nav('capa', null)">← Etiquetas</button>
-          <span id="etc-status-pill" class="etc-pill etc-pill-off">○ desconectado</span>
         </div>
         <div class="etc-body">
-          <div id="etc-aviso-sem-impressora" class="etc-aviso" style="display:none">
-            <span>Conecte a impressora antes de imprimir.</span>
-            <a onclick="switchEtcTab('impressora', document.querySelectorAll('.etc-tabbar-item')[2])">Ir para Impressora</a>
-          </div>
-          <div id="etc-tab-pontual"></div>
-          <div id="etc-tab-lotes" style="display:none"></div>
-          <div id="etc-tab-impressora" style="display:none"></div>
-        </div>
-        <div class="etc-tabbar">
-          <div class="etc-tabbar-item on" onclick="switchEtcTab('pontual',this)"><span class="ic">🏷️</span>Coleta</div>
-          <div class="etc-tabbar-item" onclick="switchEtcTab('lotes',this)"><span class="ic">📋</span>Lotes</div>
-          <div class="etc-tabbar-item" onclick="switchEtcTab('impressora',this)"><span class="ic">🔌</span>Impressora</div>
+          <div id="etc-view-hub"></div>
+          <div id="etc-view-avulsa" style="display:none"></div>
+          <div id="etc-view-preview" style="display:none"></div>
+          <div id="etc-view-lote" style="display:none"></div>
+          <div id="etc-view-consulta" style="display:none"></div>
+          <div id="etc-view-impressora" style="display:none"></div>
         </div>
       </div><!-- /panel-etiquetas-coleta -->
 
