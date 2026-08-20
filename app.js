@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '318';
+var BUILD = '319';
 var ETIQUETAS_API_URL = 'https://therapeutic-girlfriend-indicate-logic.trycloudflare.com'; // TEMP: túnel de teste local, não commitar
 (function() {
   var vEl = document.getElementById('sb-versao');
@@ -1004,8 +1004,11 @@ var CAPA_MODULOS = [
   { id:'etiquetas', label:'Etiquetas e Consulta', desenvolvido:true, moduloChave:'etiquetas',
     // Correção pontual/lote é um fluxo de chão de loja: aberto pra qualquer
     // perfil operacional, não só admin/supervisor (diferente de 'central').
+    // No celular, admin/supervisor também caem direto no hub mobile — a
+    // retaguarda (abas Layout/Lotes/Histórico) é tela de desktop, mesmo
+    // breakpoint (768px) já usado no resto do app pra decidir isso.
     roleOk: function(){ return true; },
-    page: function(){ return (S.role==='admin' || S.role==='supervisor') ? 'etiquetas' : 'etiquetas-coleta'; },
+    page: function(){ return (window.innerWidth <= 768 || (S.role!=='admin' && S.role!=='supervisor')) ? 'etiquetas-coleta' : 'etiquetas'; },
     icone:'<path d="M20.59 13.41L11 3.83V3h.01L20.59 12.59a2 2 0 010 2.82z"/><path d="M11 3H4a1 1 0 00-1 1v7l9.59 9.59a2 2 0 002.82 0l6.18-6.18a2 2 0 000-2.82z"/><circle cx="7.5" cy="7.5" r="1.5"/>' }
 ];
 
