@@ -1001,7 +1001,7 @@ var CAPA_MODULOS = [
     icone:'<rect x="1" y="7" width="15" height="13" rx="2"/><path d="M16 11h3l3 4v5h-6"/><circle cx="6" cy="20" r="1.5"/><circle cx="17" cy="20" r="1.5"/>' },
   { id:'validade', label:'Validade', desenvolvido:false,
     icone:'<rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/>' },
-  { id:'etiquetas', label:'Etiquetas', desenvolvido:true, moduloChave:'etiquetas',
+  { id:'etiquetas', label:'Etiquetas e Consulta', desenvolvido:true, moduloChave:'etiquetas',
     // Correção pontual/lote é um fluxo de chão de loja: aberto pra qualquer
     // perfil operacional, não só admin/supervisor (diferente de 'central').
     roleOk: function(){ return true; },
@@ -1888,7 +1888,7 @@ function nav(page, el) {
     switchEtiquetasTab('layout', document.querySelector('#etiquetas-tabs .tab'));
   }
   if (page === 'etiquetas-coleta') {
-    switchEtcTab('pontual', document.querySelector('.etc-tabbar-item'));
+    abrirEtcHub('hub');
   }
   if (page==='plano') {
     loadPlanosFromFirebase(function(){
@@ -4502,6 +4502,35 @@ var _etcDevice = null, _etcGattServer = null, _etcWriteChar = null;
 // de imprimirEtiquetaBluetooth e imprimiria a etiqueta física duas vezes.
 var _etcImprimindo = false;
 
+var _etcCurrentView = 'hub'; // hub | avulsa | preview | lote | consulta | impressora
+var _etcPreviewProduto = null, _etcPreviewQtd = 1; // estado da tela de preview (Task 6)
+
+var ETC_HUB_VIEWS = ['hub', 'avulsa', 'preview', 'lote', 'consulta', 'impressora'];
+
+// Navega entre o hub e as sub-telas com destino fixo (sem parâmetros). A
+// tela de preview usa abrirEtcPreview (precisa de produto+qtd) em vez desta.
+function abrirEtcHub(view) {
+  _etcCurrentView = view;
+  ETC_HUB_VIEWS.forEach(function(v) {
+    var el = document.getElementById('etc-view-' + v);
+    if (el) el.style.display = (v === view) ? 'block' : 'none';
+  });
+  if (view === 'hub') renderEtcHub();
+  if (view === 'avulsa') renderEtcAvulsa();
+  if (view === 'lote') renderEtcLotes();
+  if (view === 'consulta') renderEtcConsulta();
+  if (view === 'impressora') renderEtcImpressora();
+}
+
+function abrirEtcPreview(produto, qtd) {
+  _etcCurrentView = 'preview';
+  ETC_HUB_VIEWS.forEach(function(v) {
+    var el = document.getElementById('etc-view-' + v);
+    if (el) el.style.display = (v === 'preview') ? 'block' : 'none';
+  });
+  renderEtcPreview(produto, qtd);
+}
+
 function parearImpressora() {
   var CANDIDATOS = ['49535343-fe7d-4ae5-8fa9-9fafd205e455'];
   navigator.bluetooth.requestDevice({
@@ -4525,7 +4554,7 @@ function parearImpressora() {
       _etcWriteChar = null;
       _etcModoImprimirTudo = false;
       _etcAtualizarStatusUI();
-      if (_etcTabAtual === 'lotes' && _loteAtualFila.length) renderFilaLote();
+      if (_etcCurrentView === 'lote' && _loteAtualFila.length) renderFilaLote();
     });
   }).catch(function(e) {
     var status = document.getElementById('etc-status-conexao');
@@ -4533,45 +4562,54 @@ function parearImpressora() {
   });
 }
 
-var _etcTabAtual = 'pontual';
-
-function switchEtcTab(tab, btn) {
-  if (_etcTabAtual === 'lotes' && tab !== 'lotes' && _etcModoImprimirTudo) {
-    _etcModoImprimirTudo = false;
-  }
-  _etcTabAtual = tab;
-  document.getElementById('etc-tab-pontual').style.display = tab === 'pontual' ? 'block' : 'none';
-  document.getElementById('etc-tab-lotes').style.display = tab === 'lotes' ? 'block' : 'none';
-  document.getElementById('etc-tab-impressora').style.display = tab === 'impressora' ? 'block' : 'none';
-  document.querySelectorAll('.etc-tabbar-item').forEach(function(t){t.classList.remove('on');});
-  if (btn) btn.classList.add('on');
-  _etcAtualizarStatusUI();
-  if (tab === 'pontual') renderEtcPontual();
-  if (tab === 'lotes') renderEtcLotes();
-  if (tab === 'impressora') renderEtcImpressora();
-}
-
-// Atualiza o pill de status no topbar e a faixa de aviso "conecte a impressora"
-// (só aparece nas abas Coleta/Lotes — na própria aba Impressora seria redundante).
+// Re-renderiza a view atual quando o estado da impressora muda (conectou,
+// desconectou) — cada view decide sozinha o que fazer com _etcWriteChar
+// (desabilitar botão, mostrar aviso, etc.), esta função só dispara o redraw.
 function _etcAtualizarStatusUI() {
-  var pill = document.getElementById('etc-status-pill');
-  if (pill) {
-    pill.textContent = _etcWriteChar ? '● conectado' : '○ desconectado';
-    pill.className = 'etc-pill ' + (_etcWriteChar ? 'etc-pill-on' : 'etc-pill-off');
-  }
-  var aviso = document.getElementById('etc-aviso-sem-impressora');
-  if (aviso) {
-    aviso.style.display = (!_etcWriteChar && (_etcTabAtual === 'pontual' || _etcTabAtual === 'lotes')) ? 'flex' : 'none';
-  }
+  if (_etcCurrentView === 'hub') renderEtcHub();
+  else if (_etcCurrentView === 'avulsa') renderEtcAvulsa();
+  else if (_etcCurrentView === 'lote') renderEtcLotes();
+  else if (_etcCurrentView === 'impressora') renderEtcImpressora();
+  else if (_etcCurrentView === 'preview' && _etcPreviewProduto) renderEtcPreview(_etcPreviewProduto, _etcPreviewQtd);
 }
 
 function renderEtcImpressora() {
-  var wrap = document.getElementById('etc-tab-impressora');
+  var wrap = document.getElementById('etc-view-impressora');
   wrap.innerHTML =
-    '<div style="text-align:center;padding:20px 0">' +
-      '<p style="margin-bottom:12px;color:var(--t3);font-size:13px">' + (_etcWriteChar ? 'Impressora conectada.' : 'Conecte na impressora pra poder imprimir.') + '</p>' +
+    '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="abrirEtcHub(\'hub\')">← Etiquetas e Consulta</button></div>' +
+    '<div class="card" style="padding:20px;text-align:center">' +
+      '<p style="margin-bottom:12px;color:var(--t3);font-size:13px">' + (_etcWriteChar ? ('Conectada: ' + _escHtml(_etcDevice ? _etcDevice.name : '')) : 'Conecte na impressora pra poder imprimir.') + '</p>' +
       '<button class="btn btn-p" onclick="parearImpressora()">' + (_etcWriteChar ? 'Conectar em outra impressora' : 'Conectar na impressora') + '</button>' +
       '<div id="etc-status-conexao" style="margin-top:10px;font-size:13px"></div>' +
+    '</div>' +
+    '<p style="margin-top:14px;font-size:12px;color:var(--t3);text-align:center">Mantenha a impressora ligada e próxima ao dispositivo para garantir a conexão.</p>';
+}
+
+// Renderiza só os 4 cards do hub. Task 4 substitui esta função inteira pra
+// adicionar a lista "Últimas impressões" logo abaixo.
+function renderEtcHub() {
+  var wrap = document.getElementById('etc-view-hub');
+  var statusImpressora = _etcWriteChar ? '● Conectada' : '○ Desconectada';
+  var statusCls = _etcWriteChar ? 'etc-pill-on' : 'etc-pill-off';
+  wrap.innerHTML =
+    '<div class="etc-hub-grid">' +
+      '<div class="etc-hub-card" onclick="abrirEtcHub(\'avulsa\')">' +
+        '<div class="etc-hub-card-icon">🏷️</div>' +
+        '<div class="etc-hub-card-body"><div class="etc-hub-card-title">Etiqueta Avulsa</div><div class="etc-hub-card-desc">Imprima uma etiqueta de um produto específico</div></div>' +
+      '</div>' +
+      '<div class="etc-hub-card" onclick="abrirEtcHub(\'lote\')">' +
+        '<div class="etc-hub-card-icon">📋</div>' +
+        '<div class="etc-hub-card-body"><div class="etc-hub-card-title">Etiquetas em Lote</div><div class="etc-hub-card-desc">Selecione vários produtos e imprima em lote</div></div>' +
+      '</div>' +
+      '<div class="etc-hub-card" onclick="abrirEtcHub(\'consulta\')">' +
+        '<div class="etc-hub-card-icon">🔍</div>' +
+        '<div class="etc-hub-card-body"><div class="etc-hub-card-title">Consulta de Preços</div><div class="etc-hub-card-desc">Consulte informações e preços dos produtos</div></div>' +
+      '</div>' +
+      '<div class="etc-hub-card" onclick="abrirEtcHub(\'impressora\')">' +
+        '<div class="etc-hub-card-icon">🔌</div>' +
+        '<div class="etc-hub-card-body"><div class="etc-hub-card-title">Impressora</div><div class="etc-hub-card-desc">Conecte e gerencie a impressora Bluetooth</div></div>' +
+        '<span class="etc-pill ' + statusCls + '">' + statusImpressora + '</span>' +
+      '</div>' +
     '</div>';
 }
 
