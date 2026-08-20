@@ -4684,26 +4684,29 @@ function imprimirEtiquetaBluetooth(produto) {
   });
 }
 
-// ── Etiquetas: correção pontual (mobile) — scan, prévia, impressão, log ──
-function renderEtcPontual() {
-  var wrap = document.getElementById('etc-tab-pontual');
-  // Reaproveita iniciarScanEAN (app.js:12065) — já resolve leitura de câmera
-  // via ZXing no coletor real. Não usar BarcodeDetector nativo (ver Global
-  // Constraints: já tentado e abandonado neste projeto).
+// ── Etiquetas: Etiqueta Avulsa (mobile) — scan, prévia, quantidade ──
+var _etcAvulsaQtd = 1;
+
+function renderEtcAvulsa() {
+  var wrap = document.getElementById('etc-view-avulsa');
+  // Reaproveita iniciarScanEAN (já resolve leitura de câmera via ZXing no
+  // coletor real). Não usar BarcodeDetector nativo (ver Global Constraints).
   var btnCamera = (typeof ZXing !== 'undefined')
     ? '<button class="btn btn-s" style="flex-shrink:0" onclick="iniciarScanEAN(\'etc-input-codigo\')" title="Bipar com a câmera">📷</button>'
     : '';
   wrap.innerHTML =
+    '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="abrirEtcHub(\'hub\')">← Etiquetas e Consulta</button></div>' +
+    (!_etcWriteChar ? '<div class="etc-aviso"><span>Conecte a impressora antes de imprimir.</span><a onclick="abrirEtcHub(\'impressora\')">Ir para Impressora</a></div>' : '') +
     '<div style="display:flex;gap:8px;margin-bottom:12px">' +
       '<input id="etc-input-codigo" placeholder="Bipe o código de barras" autofocus style="flex:1;padding:14px;font-size:16px">' +
       btnCamera +
     '</div>' +
-    '<div id="etc-preview"></div>';
+    '<div id="etc-avulsa-preview"></div>';
   var input = document.getElementById('etc-input-codigo');
   var timer = null;
   input.addEventListener('input', function() {
     clearTimeout(timer);
-    timer = setTimeout(function() { buscarProdutoPontual(input.value.trim()); }, 1000);
+    timer = setTimeout(function() { buscarProdutoAvulsa(input.value.trim()); }, 1000);
   });
   // iniciarScanEAN preenche o input e dispara um keydown de Enter (não um
   // evento "input") — sem este listener a busca nunca dispararia após ler
@@ -4712,14 +4715,15 @@ function renderEtcPontual() {
   input.addEventListener('keydown', function(e) {
     if (e.key === 'Enter') {
       clearTimeout(timer);
-      buscarProdutoPontual(input.value.trim());
+      buscarProdutoAvulsa(input.value.trim());
     }
   });
 }
 
-function buscarProdutoPontual(codigo) {
+function buscarProdutoAvulsa(codigo) {
   if (!codigo) return;
-  var preview = document.getElementById('etc-preview');
+  _etcAvulsaQtd = 1;
+  var preview = document.getElementById('etc-avulsa-preview');
   preview.innerHTML = '<div class="empty">Buscando...</div>';
   firebase.auth().currentUser.getIdToken().then(function(token) {
     return fetch(ETIQUETAS_API_URL + '/produto/' + encodeURIComponent(codigo), {
@@ -4730,16 +4734,30 @@ function buscarProdutoPontual(codigo) {
     if (!resp.ok) throw new Error('Erro ao consultar o ERP.');
     return resp.json();
   }).then(function(produto) {
-    var disabledAttr = _etcWriteChar ? '' : 'disabled title="Conecte a impressora primeiro"';
-    preview.innerHTML =
-      '<div class="card" style="padding:16px">' +
-        '<div style="font-weight:700;margin-bottom:4px">' + _escHtml(produto.nome) + '</div>' +
-        '<div style="font-size:20px;color:var(--pri);font-weight:800;margin-bottom:12px">R$ ' + produto.preco.toFixed(2) + '</div>' +
-        '<button class="btn btn-p" style="width:100%" ' + disabledAttr + ' onclick="confirmarImpressaoPontual(' + _escHtml(JSON.stringify(produto)) + ')">Imprimir etiqueta</button>' +
-      '</div>';
+    _etcRenderAvulsaCard(produto);
   }).catch(function(e) {
     preview.innerHTML = '<div class="empty">' + _escHtml(e.message) + '</div>';
   });
+}
+
+// Card do produto com stepper de quantidade — chamada de novo a cada +/-
+// (re-render simples, sem estado por-elemento; o projeto já usa esse padrão
+// em outras telas do módulo).
+function _etcRenderAvulsaCard(produto) {
+  var preview = document.getElementById('etc-avulsa-preview');
+  var produtoJson = _escHtml(JSON.stringify(produto));
+  preview.innerHTML =
+    '<div class="card" style="padding:16px">' +
+      '<div style="font-weight:700;margin-bottom:4px">' + _escHtml(produto.nome) + '</div>' +
+      '<div style="font-size:11.5px;color:var(--t3);margin-bottom:8px">Código: ' + _escHtml(produto.codigoBarras) + '</div>' +
+      '<div style="font-size:20px;color:var(--dk2);font-weight:800;margin-bottom:4px">R$ ' + produto.preco.toFixed(2) + '</div>' +
+      '<div class="etc-stepper">' +
+        '<button onclick="_etcAvulsaQtd=Math.max(1,_etcAvulsaQtd-1);_etcRenderAvulsaCard(' + produtoJson + ')">−</button>' +
+        '<div class="etc-stepper-val">' + _etcAvulsaQtd + '</div>' +
+        '<button onclick="_etcAvulsaQtd++;_etcRenderAvulsaCard(' + produtoJson + ')">+</button>' +
+      '</div>' +
+      '<button class="btn btn-p" style="width:100%" onclick="abrirEtcPreview(' + produtoJson + ', _etcAvulsaQtd)">Ver Etiqueta</button>' +
+    '</div>';
 }
 
 function confirmarImpressaoPontual(produto) {
