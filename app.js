@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '316';
+var BUILD = '317';
 var ETIQUETAS_API_URL = 'https://therapeutic-girlfriend-indicate-logic.trycloudflare.com'; // TEMP: túnel de teste local, não commitar
 (function() {
   var vEl = document.getElementById('sb-versao');
@@ -5082,7 +5082,7 @@ function imprimirProximoDaFila() {
       return _avancarFilaLoteAposImpressao();
     }, function(e) {
       // A etiqueta já saiu da impressora — não reimprimir. Avança a fila mesmo
-      // com o log falhando, só avisando o operador (mesmo padrão de confirmarImpressaoPontual).
+      // com o log falhando, só avisando o operador (mesmo padrão de confirmarImpressaoAvulsa).
       // Usa o 2º argumento de .then() (em vez de um .catch() encadeado) para que
       // este handler só reaja a falhas do próprio etiquetas_log.add() — um
       // .catch() encadeado depois do .then() acima também capturaria o marcador
