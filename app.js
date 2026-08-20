@@ -4964,15 +4964,34 @@ function _etcAtualizarBarraLote() {
 // Monta a fila de impressão direto da seleção mockada, sem gravar um
 // documento etiquetas_lote — fluxo mobile paralelo ao de retaguarda (que
 // continua gravando o documento normalmente via abrirLoteParaImpressao).
+// Os itens selecionados vêm do catálogo mockado (ETC_MOCK_PRODUTOS), usado
+// só pra busca/filtro/checkbox — nome, preço etc. ali são fictícios. Antes de
+// enfileirar pra impressão física, resolve o produto REAL na API (mesmo
+// padrão de abrirLoteParaImpressao) pra nunca imprimir/logar um preço
+// inventado numa etiqueta física.
 function _etcGerarLoteMock() {
   var itens = Object.keys(_etcLoteSelecionados).map(function(k) { return _etcLoteSelecionados[k]; });
   if (!itens.length) return;
   _loteAtualId = null;
-  _loteAtualFila = [];
-  itens.forEach(function(it) {
-    for (var i = 0; i < it.qtd; i++) _loteAtualFila.push(it.produto);
+  var wrap = document.getElementById('etc-view-lote');
+  wrap.innerHTML = '<div class="empty">Resolvendo preços...</div>';
+  firebase.auth().currentUser.getIdToken().then(function(token) {
+    return Promise.all(itens.map(function(it) {
+      return fetch(ETIQUETAS_API_URL + '/produto/' + encodeURIComponent(it.produto.codigoBarras), {
+        headers: {Authorization: 'Bearer ' + token}
+      }).then(function(resp) { return resp.ok ? resp.json() : null; })
+        .then(function(produtoReal) { return {item: it, produto: produtoReal}; });
+    }));
+  }).then(function(resolvidos) {
+    _loteAtualFila = [];
+    resolvidos.forEach(function(r) {
+      if (!r.produto) return;
+      for (var i = 0; i < r.item.qtd; i++) _loteAtualFila.push(r.produto);
+    });
+    renderFilaLote();
+  }).catch(function(e) {
+    wrap.innerHTML = '<div class="empty">Erro ao carregar: ' + _escHtml(e.message) + '</div>';
   });
-  renderFilaLote();
 }
 
 var _loteAtualId = null, _loteAtualFila = [];
