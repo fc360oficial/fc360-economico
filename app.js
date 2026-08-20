@@ -4838,13 +4838,22 @@ function confirmarImpressaoAvulsa(produto, qtdTotal) {
 }
 
 // ── Etiquetas: fluxo de lote (mobile) — resolver preços, fila, conclusão ──
+// Lista os lotes montados na retaguarda (desktop, fluxo existente desde o
+// v1) e oferece "+ Montar novo lote" como caminho alternativo mobile (novo
+// nesta rodada) — os dois convivem, nenhum substitui o outro.
 function renderEtcLotes() {
-  var wrap = document.getElementById('etc-tab-lotes');
-  wrap.innerHTML = '<div class="empty">Carregando...</div>';
+  var wrap = document.getElementById('etc-view-lote');
+  wrap.innerHTML =
+    '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="abrirEtcHub(\'hub\')">← Etiquetas e Consulta</button></div>' +
+    (!_etcWriteChar ? '<div class="etc-aviso"><span>Conecte a impressora antes de imprimir.</span><a onclick="abrirEtcHub(\'impressora\')">Ir para Impressora</a></div>' : '') +
+    '<button class="btn btn-p" style="width:100%;margin-bottom:16px" onclick="renderEtcMontarLote()">+ Montar novo lote</button>' +
+    '<div id="etc-lotes-pendentes"><div class="empty">Carregando lotes pendentes...</div></div>';
   db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_lote')
     .where('status', '==', 'pendente').get().then(function(snap) {
-      if (snap.empty) { wrap.innerHTML = '<div class="empty">Nenhum lote pendente.</div>'; return; }
-      wrap.innerHTML = snap.docs.map(function(d) {
+      var listWrap = document.getElementById('etc-lotes-pendentes');
+      if (!listWrap) return;
+      if (snap.empty) { listWrap.innerHTML = '<div class="empty">Nenhum lote pendente da retaguarda.</div>'; return; }
+      listWrap.innerHTML = snap.docs.map(function(d) {
         var l = d.data();
         return '<div class="card" style="padding:14px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">' +
           '<div>' + l.itens.length + ' itens</div>' +
@@ -4852,8 +4861,118 @@ function renderEtcLotes() {
           '</div>';
       }).join('');
     }).catch(function(e) {
-      wrap.innerHTML = '<div class="empty">Erro ao carregar: ' + _escHtml(e.message) + '</div>';
+      var listWrap = document.getElementById('etc-lotes-pendentes');
+      if (listWrap) listWrap.innerHTML = '<div class="empty">Erro ao carregar: ' + _escHtml(e.message) + '</div>';
     });
+}
+
+// Catálogo temporário — a etiquetas-api hoje só expõe GET /produto/:codigo
+// (busca exata), sem endpoint de busca/filtro por Departamento/Setor/Marca.
+// Investigar o schema real do ERP (supermercado.itens + tabelas de grupo)
+// depende de acesso à rede da Central, indisponível nesta sessão — decisão
+// explícita do Tiago (spec 2026-08-20, Fora de escopo). Quando o endpoint
+// real existir, troca-se esta lista fixa por uma chamada de rede.
+var ETC_MOCK_PRODUTOS = [
+  {codigoBarras:'7891021001885', nome:'Melitta Filtro Papel 102', preco:5.69, departamento:'Mercearia', setor:'Café e Filtros', marca:'Melitta', estoque:24, precoAnterior:5.29},
+  {codigoBarras:'7891000100103', nome:'Arroz Tipo 1 5kg', preco:24.90, departamento:'Mercearia', setor:'Grãos', marca:'Tio João', estoque:40, precoAnterior:23.90},
+  {codigoBarras:'7896004004501', nome:'Feijão Carioca 1kg', preco:8.99, departamento:'Mercearia', setor:'Grãos', marca:'Camil', estoque:35, precoAnterior:8.49},
+  {codigoBarras:'7891910000197', nome:'Açúcar Cristal 1kg', preco:4.79, departamento:'Mercearia', setor:'Açúcar e Adoçante', marca:'União', estoque:60, precoAnterior:4.59},
+  {codigoBarras:'7896336010012', nome:'Café Extra Forte 500g', preco:16.90, departamento:'Mercearia', setor:'Café e Filtros', marca:'3 Corações', estoque:18, precoAnterior:15.90},
+  {codigoBarras:'7891000053001', nome:'Leite Integral 1L', preco:5.49, departamento:'Laticínios', setor:'Leites', marca:'Piracanjuba', estoque:50, precoAnterior:5.29}
+];
+
+var _etcLoteSelecionados = {}; // codigoBarras -> {produto, qtd}
+
+function _etcFiltrosUnicos(campo) {
+  var vistos = {}, out = [];
+  ETC_MOCK_PRODUTOS.forEach(function(p) { if (!vistos[p[campo]]) { vistos[p[campo]] = true; out.push(p[campo]); } });
+  return out.sort();
+}
+
+function renderEtcMontarLote() {
+  _etcLoteSelecionados = {};
+  var wrap = document.getElementById('etc-view-lote');
+  wrap.innerHTML =
+    '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="renderEtcLotes()">← Lotes pendentes</button></div>' +
+    '<input id="etc-lote-busca" placeholder="Buscar produtos..." style="width:100%;padding:12px;font-size:14px;margin-bottom:10px" oninput="_etcRenderListaLote()">' +
+    '<div class="etc-filter-row">' +
+      '<select id="etc-lote-filtro-depto" onchange="_etcRenderListaLote()"><option value="">Departamento</option>' + _etcFiltrosUnicos('departamento').map(function(v){return '<option value="'+_escHtml(v)+'">'+_escHtml(v)+'</option>';}).join('') + '</select>' +
+      '<select id="etc-lote-filtro-setor" onchange="_etcRenderListaLote()"><option value="">Setor</option>' + _etcFiltrosUnicos('setor').map(function(v){return '<option value="'+_escHtml(v)+'">'+_escHtml(v)+'</option>';}).join('') + '</select>' +
+      '<select id="etc-lote-filtro-marca" onchange="_etcRenderListaLote()"><option value="">Marca</option>' + _etcFiltrosUnicos('marca').map(function(v){return '<option value="'+_escHtml(v)+'">'+_escHtml(v)+'</option>';}).join('') + '</select>' +
+    '</div>' +
+    '<div id="etc-lote-lista"></div>' +
+    '<div class="etc-sticky-bar">' +
+      '<span id="etc-lote-contagem" style="font-size:12.5px;color:var(--t3)">0 produtos selecionados</span>' +
+      '<button class="btn btn-p" id="etc-lote-gerar-btn" disabled onclick="_etcGerarLoteMock()">Gerar Etiquetas</button>' +
+    '</div>';
+  _etcRenderListaLote();
+}
+
+function _etcRenderListaLote() {
+  var busca = (document.getElementById('etc-lote-busca').value || '').toLowerCase();
+  var depto = document.getElementById('etc-lote-filtro-depto').value;
+  var setor = document.getElementById('etc-lote-filtro-setor').value;
+  var marca = document.getElementById('etc-lote-filtro-marca').value;
+  var filtrados = ETC_MOCK_PRODUTOS.filter(function(p) {
+    if (busca && p.nome.toLowerCase().indexOf(busca) === -1 && p.codigoBarras.indexOf(busca) === -1) return false;
+    if (depto && p.departamento !== depto) return false;
+    if (setor && p.setor !== setor) return false;
+    if (marca && p.marca !== marca) return false;
+    return true;
+  });
+  var lista = document.getElementById('etc-lote-lista');
+  if (!filtrados.length) { lista.innerHTML = '<div class="empty">Nenhum produto encontrado.</div>'; return; }
+  lista.innerHTML = filtrados.map(function(p) {
+    var sel = _etcLoteSelecionados[p.codigoBarras];
+    var checked = sel ? 'checked' : '';
+    var qtd = sel ? sel.qtd : 1;
+    return '<div class="etc-check-item">' +
+      '<input type="checkbox" ' + checked + ' onchange="_etcToggleLoteItem(' + _escHtml(JSON.stringify(p)) + ', this.checked)">' +
+      '<div class="etc-check-item-body">' +
+        '<div class="etc-check-item-name">' + _escHtml(p.nome) + '</div>' +
+        '<div class="etc-check-item-meta">Código: ' + _escHtml(p.codigoBarras) + ' · R$ ' + p.preco.toFixed(2) + '</div>' +
+      '</div>' +
+      '<input type="number" class="etc-check-item-qtd" min="1" value="' + qtd + '" ' + (sel ? '' : 'disabled') + ' onchange="_etcAtualizarQtdLoteItem(\'' + p.codigoBarras + '\', this.value)">' +
+    '</div>';
+  }).join('');
+}
+
+function _etcToggleLoteItem(produto, marcado) {
+  if (marcado) {
+    _etcLoteSelecionados[produto.codigoBarras] = {produto: produto, qtd: 1};
+  } else {
+    delete _etcLoteSelecionados[produto.codigoBarras];
+  }
+  _etcAtualizarBarraLote();
+  _etcRenderListaLote();
+}
+
+function _etcAtualizarQtdLoteItem(codigo, valor) {
+  var qtd = Math.max(1, parseInt(valor, 10) || 1);
+  if (_etcLoteSelecionados[codigo]) _etcLoteSelecionados[codigo].qtd = qtd;
+  _etcAtualizarBarraLote();
+}
+
+function _etcAtualizarBarraLote() {
+  var n = Object.keys(_etcLoteSelecionados).length;
+  var contagem = document.getElementById('etc-lote-contagem');
+  var btn = document.getElementById('etc-lote-gerar-btn');
+  if (contagem) contagem.textContent = n + (n === 1 ? ' produto selecionado' : ' produtos selecionados');
+  if (btn) { btn.disabled = n === 0; btn.textContent = 'Gerar Etiquetas' + (n ? ' (' + n + ')' : ''); }
+}
+
+// Monta a fila de impressão direto da seleção mockada, sem gravar um
+// documento etiquetas_lote — fluxo mobile paralelo ao de retaguarda (que
+// continua gravando o documento normalmente via abrirLoteParaImpressao).
+function _etcGerarLoteMock() {
+  var itens = Object.keys(_etcLoteSelecionados).map(function(k) { return _etcLoteSelecionados[k]; });
+  if (!itens.length) return;
+  _loteAtualId = null;
+  _loteAtualFila = [];
+  itens.forEach(function(it) {
+    for (var i = 0; i < it.qtd; i++) _loteAtualFila.push(it.produto);
+  });
+  renderFilaLote();
 }
 
 var _loteAtualId = null, _loteAtualFila = [];
@@ -4862,7 +4981,7 @@ var _etcFilaTotal = 0; // tamanho da fila no início do "Imprimir tudo", pro con
 
 function abrirLoteParaImpressao(loteId) {
   _loteAtualId = loteId;
-  var wrap = document.getElementById('etc-tab-lotes');
+  var wrap = document.getElementById('etc-view-lote');
   wrap.innerHTML = '<div class="empty">Resolvendo preços...</div>';
   db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_lote').doc(loteId).get()
     .then(function(doc) {
@@ -4888,7 +5007,7 @@ function abrirLoteParaImpressao(loteId) {
 }
 
 function renderFilaLote() {
-  var wrap = document.getElementById('etc-tab-lotes');
+  var wrap = document.getElementById('etc-view-lote');
   if (!_loteAtualFila.length) {
     wrap.innerHTML = '<div class="empty">Fila vazia ou todos os produtos falharam ao resolver.</div><button class="btn btn-s btn-sm" onclick="renderEtcLotes()">Voltar</button>';
     return;
@@ -4907,6 +5026,13 @@ function renderFilaLote() {
 function _avancarFilaLoteAposImpressao() {
   _loteAtualFila.shift();
   if (!_loteAtualFila.length) {
+    if (!_loteAtualId) {
+      // Lote mockado (montado na Coleta via _etcGerarLoteMock, Task 7) —
+      // não existe documento etiquetas_lote pra atualizar.
+      showToast('✅ Lote concluído!');
+      renderEtcLotes();
+      return Promise.resolve();
+    }
     return db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_lote').doc(_loteAtualId)
       .update({status: 'concluido'}).then(function() {
         showToast('✅ Lote concluído!');
@@ -4933,7 +5059,7 @@ function imprimirProximoDaFila() {
   if (!_loteAtualFila.length) { _etcModoImprimirTudo = false; return; }
   if (_etcImprimindo) return;
   _etcImprimindo = true;
-  var btns = document.querySelectorAll('#etc-tab-lotes .btn-row .btn');
+  var btns = document.querySelectorAll('#etc-view-lote .btn-row .btn');
   btns.forEach(function(b){ b.disabled = true; });
   if (_etcModoImprimirTudo) {
     var progresso = document.getElementById('etc-fila-progresso');
@@ -4991,7 +5117,7 @@ function imprimirProximoDaFila() {
       // neste ponto (guard não protege mais) e o próximo item só dispara
       // daqui a 300ms, redesabilita os botões agora, na mesma tick, pra
       // não deixar uma janela real de clique válido nesse intervalo.
-      var btnsAgain = document.querySelectorAll('#etc-tab-lotes .btn-row .btn');
+      var btnsAgain = document.querySelectorAll('#etc-view-lote .btn-row .btn');
       btnsAgain.forEach(function(b){ b.disabled = true; });
       setTimeout(imprimirProximoDaFila, 300);
     } else {
