@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '320';
+var BUILD = '321';
 var ETIQUETAS_API_URL = 'https://therapeutic-girlfriend-indicate-logic.trycloudflare.com'; // TEMP: túnel de teste local, não commitar
 (function() {
   var vEl = document.getElementById('sb-versao');
@@ -4724,16 +4724,16 @@ function renderEtcAvulsa() {
   var wrap = document.getElementById('etc-view-avulsa');
   // Reaproveita iniciarScanEAN (já resolve leitura de câmera via ZXing no
   // coletor real). Não usar BarcodeDetector nativo (ver Global Constraints).
-  var btnCamera = (typeof ZXing !== 'undefined')
-    ? '<button class="btn btn-s" style="flex-shrink:0" onclick="iniciarScanEAN(\'etc-input-codigo\')" title="Bipar com a câmera">📷</button>'
-    : '';
+  var temCamera = typeof ZXing !== 'undefined';
   wrap.innerHTML =
     '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="abrirEtcHub(\'hub\')">← Etiquetas e Consulta</button></div>' +
     (!_etcWriteChar ? '<div class="etc-aviso"><span>Conecte a impressora antes de imprimir.</span><a onclick="abrirEtcHub(\'impressora\')">Ir para Impressora</a></div>' : '') +
-    '<div style="display:flex;gap:8px;margin-bottom:12px">' +
-      '<input id="etc-input-codigo" placeholder="Bipe o código de barras" autofocus style="flex:1;padding:14px;font-size:16px">' +
-      btnCamera +
+    '<div class="card etc-bipar-card"' + (temCamera ? ' onclick="iniciarScanEAN(\'etc-input-codigo\')"' : ' style="opacity:.5;cursor:default"') + '>' +
+      '<div class="etc-bipar-icon">📷</div>' +
+      '<div><div class="etc-bipar-title">Bipar produto</div><div class="etc-bipar-desc">Aponte a câmera para o código de barras do produto</div></div>' +
     '</div>' +
+    '<div class="etc-ou-divider">ou</div>' +
+    '<input id="etc-input-codigo" placeholder="Digite o código ou nome do produto" autofocus style="width:100%;padding:14px;font-size:16px;margin-bottom:12px">' +
     '<div id="etc-avulsa-preview"></div>';
   var input = document.getElementById('etc-input-codigo');
   var timer = null;
@@ -4781,11 +4781,19 @@ function _etcRenderAvulsaCard(produto) {
   _etcAvulsaProdutoAtual = produto;
   var preview = document.getElementById('etc-avulsa-preview');
   var produtoJson = _escHtml(JSON.stringify(produto));
+  // Marca só aparece quando o código bate com o catálogo mockado (Task 7) —
+  // a etiquetas-api real não retorna esse campo ainda. Nunca inventar.
+  var mock = ETC_MOCK_PRODUTOS.filter(function(p) { return p.codigoBarras === produto.codigoBarras; })[0];
   preview.innerHTML =
     '<div class="card" style="padding:16px">' +
-      '<div style="font-weight:700;margin-bottom:4px">' + _escHtml(produto.nome) + '</div>' +
-      '<div style="font-size:11.5px;color:var(--t3);margin-bottom:8px">Código: ' + _escHtml(produto.codigoBarras) + '</div>' +
-      '<div style="font-size:20px;color:var(--dk2);font-weight:800;margin-bottom:4px">R$ ' + produto.preco.toFixed(2) + '</div>' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:4px">' +
+        '<div style="font-weight:700">' + _escHtml(produto.nome) + '</div>' +
+        '<span class="etc-pill etc-pill-on" style="flex-shrink:0">Ativo</span>' +
+      '</div>' +
+      (mock ? '<div style="font-size:12px;color:var(--t3);margin-bottom:2px">Marca: ' + _escHtml(mock.marca) + '</div>' : '') +
+      '<div style="font-size:11.5px;color:var(--t3);margin-bottom:10px">Código: ' + _escHtml(produto.codigoBarras) + '</div>' +
+      '<div style="font-size:11px;color:var(--t3);text-transform:uppercase;letter-spacing:.3px;margin-bottom:2px">Preço atual</div>' +
+      '<div style="font-size:22px;color:var(--dk2);font-weight:800;margin-bottom:4px">R$ ' + produto.preco.toFixed(2) + '</div>' +
       '<div class="etc-stepper">' +
         '<button onclick="_etcAvulsaQtd=Math.max(1,_etcAvulsaQtd-1);_etcRenderAvulsaCard(' + produtoJson + ')">−</button>' +
         '<div class="etc-stepper-val">' + _etcAvulsaQtd + '</div>' +
