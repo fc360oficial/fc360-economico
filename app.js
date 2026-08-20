@@ -4767,7 +4767,7 @@ function renderEtcPreview(produto, qtd) {
   var wrap = document.getElementById('etc-view-preview');
   var disabledAttr = _etcWriteChar ? '' : 'disabled title="Conecte a impressora primeiro"';
   wrap.innerHTML =
-    '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="abrirEtcHub(\'avulsa\')">← Voltar</button></div>' +
+    '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="_etcVoltarDaPreview()">← Voltar</button></div>' +
     '<div class="etc-preview-label">' +
       '<div class="etc-preview-label-nome">' + _escHtml(produto.nome) + '</div>' +
       '<div class="etc-preview-label-preco">R$ ' + produto.preco.toFixed(2) + '</div>' +
@@ -4791,6 +4791,19 @@ function renderEtcPreview(produto, qtd) {
   } catch (e) {
     console.error('[etiquetas] erro ao renderizar barcode de preview:', e.message);
   }
+}
+
+// "← Voltar" do preview pra Avulsa. abrirEtcHub('avulsa') sozinho chama
+// renderEtcAvulsa(), que reconstrói a tela do zero com o card de produto
+// vazio — perderia o produto escaneado. Aqui religa o card com o produto
+// (ainda em _etcPreviewProduto) e a quantidade que estava no preview
+// (_etcPreviewQtd, que pode ter sido alterada ali independente do stepper
+// da própria Avulsa), sincronizando _etcAvulsaQtd antes de re-renderizar.
+function _etcVoltarDaPreview() {
+  var produto = _etcPreviewProduto, qtd = _etcPreviewQtd;
+  abrirEtcHub('avulsa');
+  _etcAvulsaQtd = qtd;
+  _etcRenderAvulsaCard(produto);
 }
 
 // Imprime qtdTotal cópias em sequência, com ~300ms de intervalo (mesmo
