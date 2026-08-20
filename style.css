@@ -86,7 +86,7 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#eef1f5;color:var(--t
 /* Hub "Etiquetas e Consulta" — 4 cards + últimas impressões */
 .etc-hub-grid{display:flex;flex-direction:column;gap:12px}
 .etc-hub-card{display:flex;align-items:center;gap:14px;text-align:left;padding:16px;background:var(--w);border:1px solid rgba(0,0,0,.06);border-radius:var(--r14);box-shadow:var(--sh);cursor:pointer}
-.etc-hub-card-icon{width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#FFC600,#e6b200);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:22px}
+.etc-hub-card-icon{width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,#FFC600,#e6b200);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:30px}
 .etc-hub-card-body{flex:1;min-width:0}
 .etc-hub-card-title{font-size:15px;font-weight:700;color:var(--t);margin-bottom:2px}
 .etc-hub-card-desc{font-size:12.5px;color:var(--t3)}

@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '319';
+var BUILD = '320';
 var ETIQUETAS_API_URL = 'https://therapeutic-girlfriend-indicate-logic.trycloudflare.com'; // TEMP: túnel de teste local, não commitar
 (function() {
   var vEl = document.getElementById('sb-versao');
