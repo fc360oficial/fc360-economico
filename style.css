@@ -82,10 +82,39 @@ body{font-family:'Plus Jakarta Sans',sans-serif;background:#eef1f5;color:var(--t
 .etc-body{flex:1;overflow-y:auto;padding:16px}
 .etc-aviso{background:var(--am2);color:var(--am);font-size:12.5px;padding:10px 14px;border-radius:10px;margin-bottom:14px;display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap}
 .etc-aviso a{color:var(--am);font-weight:700;text-decoration:underline;cursor:pointer}
-.etc-tabbar{display:flex;border-top:1px solid var(--gray2);flex-shrink:0}
-.etc-tabbar-item{flex:1;text-align:center;padding:8px 4px 10px;font-size:10.5px;color:var(--t3);cursor:pointer}
-.etc-tabbar-item .ic{font-size:18px;display:block;margin-bottom:2px}
-.etc-tabbar-item.on{color:var(--g);font-weight:700}
+
+/* Hub "Etiquetas e Consulta" — 4 cards + últimas impressões */
+.etc-hub-grid{display:flex;flex-direction:column;gap:12px}
+.etc-hub-card{display:flex;align-items:center;gap:14px;text-align:left;padding:16px;background:var(--w);border:1px solid rgba(0,0,0,.06);border-radius:var(--r14);box-shadow:var(--sh);cursor:pointer}
+.etc-hub-card-icon{width:48px;height:48px;border-radius:50%;background:linear-gradient(135deg,#FFC600,#e6b200);display:flex;align-items:center;justify-content:center;flex-shrink:0;font-size:22px}
+.etc-hub-card-body{flex:1;min-width:0}
+.etc-hub-card-title{font-size:15px;font-weight:700;color:var(--t);margin-bottom:2px}
+.etc-hub-card-desc{font-size:12.5px;color:var(--t3)}
+.etc-hub-recent{margin-top:20px}
+.etc-hub-recent-title{font-size:13px;font-weight:700;color:var(--t2);margin-bottom:10px}
+.etc-hub-recent-item{display:flex;justify-content:space-between;align-items:center;padding:10px 0;border-bottom:1px solid var(--gray2);font-size:13px}
+.etc-hub-recent-item:last-child{border-bottom:none}
+.etc-hub-recent-name{font-weight:600;color:var(--t)}
+.etc-hub-recent-meta{color:var(--t3);font-size:11.5px}
+.etc-hub-recent-qtd{font-weight:700;color:var(--t2)}
+
+/* Sub-telas (Avulsa, Preview, Lote, Consulta, Impressora) */
+.etc-sub-topbar{margin-bottom:14px}
+.etc-stepper{display:flex;align-items:center;gap:14px;justify-content:center;margin:14px 0}
+.etc-stepper button{width:38px;height:38px;border-radius:50%;border:1.5px solid var(--gray2);background:#fff;font-size:18px;font-weight:700;cursor:pointer;color:var(--t)}
+.etc-stepper-val{font-size:20px;font-weight:800;min-width:28px;text-align:center}
+.etc-preview-label{background:var(--gray);border-radius:12px;padding:20px;text-align:center;margin-bottom:16px}
+.etc-preview-label-nome{font-size:15px;font-weight:700;margin-bottom:8px}
+.etc-preview-label-preco{font-size:26px;font-weight:800;color:var(--t);margin-bottom:10px}
+.etc-filter-row{display:flex;gap:8px;margin:12px 0;overflow-x:auto}
+.etc-filter-row select{flex-shrink:0;padding:7px 10px;border:1.5px solid var(--gray2);border-radius:8px;font-size:12.5px;font-family:inherit}
+.etc-check-item{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--gray2)}
+.etc-check-item input[type=checkbox]{width:18px;height:18px;flex-shrink:0}
+.etc-check-item-body{flex:1;min-width:0}
+.etc-check-item-name{font-size:13.5px;font-weight:600;color:var(--t)}
+.etc-check-item-meta{font-size:11.5px;color:var(--t3)}
+.etc-check-item-qtd{width:50px;padding:6px;border:1.5px solid var(--gray2);border-radius:6px;text-align:center;font-size:13px}
+.etc-sticky-bar{position:sticky;bottom:0;background:#fff;border-top:1px solid var(--gray2);padding:12px 0 0;margin-top:14px;display:flex;justify-content:space-between;align-items:center;gap:10px}
 
 /* METRICS */
 .g4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:20px}
