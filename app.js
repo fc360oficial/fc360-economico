@@ -5136,6 +5136,67 @@ function imprimirTudoDaFila() {
   imprimirProximoDaFila();
 }
 
+// ── Etiquetas: Consulta de Preços (mobile) — só visualização, sem imprimir ──
+function renderEtcConsulta() {
+  var wrap = document.getElementById('etc-view-consulta');
+  var btnCamera = (typeof ZXing !== 'undefined')
+    ? '<button class="btn btn-s" style="flex-shrink:0" onclick="iniciarScanEAN(\'etc-consulta-input\')" title="Bipar com a câmera">📷</button>'
+    : '';
+  wrap.innerHTML =
+    '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="abrirEtcHub(\'hub\')">← Etiquetas e Consulta</button></div>' +
+    '<div style="display:flex;gap:8px;margin-bottom:12px">' +
+      '<input id="etc-consulta-input" placeholder="Bipe ou digite o código" autofocus style="flex:1;padding:14px;font-size:16px">' +
+      btnCamera +
+    '</div>' +
+    '<div id="etc-consulta-preview"></div>';
+  var input = document.getElementById('etc-consulta-input');
+  var timer = null;
+  input.addEventListener('input', function() {
+    clearTimeout(timer);
+    timer = setTimeout(function() { buscarProdutoConsulta(input.value.trim()); }, 1000);
+  });
+  input.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') {
+      clearTimeout(timer);
+      buscarProdutoConsulta(input.value.trim());
+    }
+  });
+}
+
+// Nome/preço/código vêm da etiquetas-api real (mesmo endpoint que Etiqueta
+// Avulsa já usa). Estoque/preço anterior/marca/departamento ainda não
+// existem na API real — só aparecem quando o código bipado bate com um item
+// do catálogo mockado (ETC_MOCK_PRODUTOS, Task 7); pra qualquer outro código
+// real, o card mostra "—" em vez de inventar valor. Ver spec 2026-08-20, Parte 4.
+function buscarProdutoConsulta(codigo) {
+  if (!codigo) return;
+  var preview = document.getElementById('etc-consulta-preview');
+  preview.innerHTML = '<div class="empty">Buscando...</div>';
+  firebase.auth().currentUser.getIdToken().then(function(token) {
+    return fetch(ETIQUETAS_API_URL + '/produto/' + encodeURIComponent(codigo), {
+      headers: {Authorization: 'Bearer ' + token}
+    });
+  }).then(function(resp) {
+    if (resp.status === 404) throw new Error('Produto não encontrado.');
+    if (!resp.ok) throw new Error('Erro ao consultar o ERP.');
+    return resp.json();
+  }).then(function(produto) {
+    var mock = ETC_MOCK_PRODUTOS.filter(function(p) { return p.codigoBarras === produto.codigoBarras; })[0];
+    preview.innerHTML =
+      '<div class="card" style="padding:16px">' +
+        '<div style="font-weight:700;margin-bottom:4px">' + _escHtml(produto.nome) + '</div>' +
+        (mock ? '<div style="font-size:11.5px;color:var(--t3);margin-bottom:8px">' + _escHtml(mock.marca) + ' · ' + _escHtml(mock.departamento) + '</div>' : '') +
+        '<div style="font-size:20px;color:var(--dk2);font-weight:800;margin-bottom:10px">R$ ' + produto.preco.toFixed(2) + '</div>' +
+        '<div style="display:flex;gap:16px;font-size:12.5px;color:var(--t2)">' +
+          '<div>Estoque: ' + (mock ? (mock.estoque + ' un.') : '—') + '</div>' +
+          '<div>Preço anterior: ' + (mock && mock.precoAnterior ? ('R$ ' + mock.precoAnterior.toFixed(2)) : '—') + '</div>' +
+        '</div>' +
+      '</div>';
+  }).catch(function(e) {
+    preview.innerHTML = '<div class="empty">' + _escHtml(e.message) + '</div>';
+  });
+}
+
 function renderCentralAtual() {
   if (centralTabAtual === 'checklist') renderCentral();
   // inventario e perdas: dados da sessão atual
