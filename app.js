@@ -4760,42 +4760,81 @@ function _etcRenderAvulsaCard(produto) {
     '</div>';
 }
 
-function confirmarImpressaoPontual(produto) {
+// ── Etiquetas: preview antes de imprimir (mobile) ──
+function renderEtcPreview(produto, qtd) {
+  _etcPreviewProduto = produto;
+  _etcPreviewQtd = qtd;
+  var wrap = document.getElementById('etc-view-preview');
+  var disabledAttr = _etcWriteChar ? '' : 'disabled title="Conecte a impressora primeiro"';
+  wrap.innerHTML =
+    '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="abrirEtcHub(\'avulsa\')">← Voltar</button></div>' +
+    '<div class="etc-preview-label">' +
+      '<div class="etc-preview-label-nome">' + _escHtml(produto.nome) + '</div>' +
+      '<div class="etc-preview-label-preco">R$ ' + produto.preco.toFixed(2) + '</div>' +
+      '<svg id="etc-preview-barcode-svg"></svg>' +
+      '<div style="font-size:11px;color:var(--t3);margin-top:6px">' + new Date().toLocaleDateString('pt-BR') + '</div>' +
+    '</div>' +
+    (!_etcWriteChar
+      ? '<div class="etc-aviso"><span>Conecte a impressora antes de imprimir.</span><a onclick="abrirEtcHub(\'impressora\')">Ir para Impressora</a></div>'
+      : '<div style="text-align:center;font-size:12.5px;color:var(--t3);margin-bottom:6px">Impressora: ' + _escHtml(_etcDevice ? _etcDevice.name : '') + '</div>') +
+    '<div class="etc-stepper">' +
+      '<button onclick="renderEtcPreview(_etcPreviewProduto, Math.max(1,_etcPreviewQtd-1))">−</button>' +
+      '<div class="etc-stepper-val">' + qtd + '</div>' +
+      '<button onclick="renderEtcPreview(_etcPreviewProduto, _etcPreviewQtd+1)">+</button>' +
+    '</div>' +
+    '<button class="btn btn-p" style="width:100%" ' + disabledAttr + ' onclick="confirmarImpressaoAvulsa(_etcPreviewProduto, _etcPreviewQtd)">Imprimir Agora</button>' +
+    '<div id="etc-preview-progresso" style="text-align:center;margin-top:8px;font-size:12.5px;color:var(--t3)"></div>';
+  try {
+    if (typeof JsBarcode !== 'undefined') {
+      JsBarcode('#etc-preview-barcode-svg', produto.codigoBarras, {format:'CODE128', width:2, height:44, displayValue:true, fontSize:12, margin:4});
+    }
+  } catch (e) {
+    console.error('[etiquetas] erro ao renderizar barcode de preview:', e.message);
+  }
+}
+
+// Imprime qtdTotal cópias em sequência, com ~300ms de intervalo (mesmo
+// padrão de imprimirTudoDaFila, pra não sobrecarregar o buffer do K329).
+// Para no primeiro erro real, mantendo o contador do que já saiu.
+function confirmarImpressaoAvulsa(produto, qtdTotal) {
   if (_etcImprimindo) return;
   _etcImprimindo = true;
-  var btn = document.querySelector('#etc-preview button.btn-p');
+  var impressas = 0;
+  var btn = document.querySelector('#etc-view-preview .btn-p');
   if (btn) btn.disabled = true;
-  imprimirEtiquetaBluetooth(produto).then(function() {
-    return db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_log').add({
-      codigoBarras: produto.codigoBarras,
-      nomeProduto: produto.nome,
-      precoImpresso: produto.preco,
-      origem: 'pontual',
-      loteId: null,
-      operadorId: S.currentUser ? S.currentUser.id : null,
-      operadorNome: S.currentUser ? S.currentUser.nome : '-',
-      timestamp: firebase.firestore.FieldValue.serverTimestamp()
+
+  function imprimirUma() {
+    imprimirEtiquetaBluetooth(produto).then(function() {
+      return db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_log').add({
+        codigoBarras: produto.codigoBarras,
+        nomeProduto: produto.nome,
+        precoImpresso: produto.preco,
+        origem: 'pontual',
+        loteId: null,
+        operadorId: S.currentUser ? S.currentUser.id : null,
+        operadorNome: S.currentUser ? S.currentUser.nome : '-',
+        timestamp: firebase.firestore.FieldValue.serverTimestamp()
+      }).catch(function(e) {
+        showToast('⚠️ Etiqueta impressa, mas houve erro ao registrar o log: ' + e.message);
+      });
+    }).then(function() {
+      impressas++;
+      var progresso = document.getElementById('etc-preview-progresso');
+      if (progresso && qtdTotal > 1) progresso.textContent = 'Impressas ' + impressas + ' de ' + qtdTotal + '...';
+      if (impressas < qtdTotal) {
+        setTimeout(imprimirUma, 300);
+      } else {
+        _etcImprimindo = false;
+        showToast('✅ ' + (qtdTotal > 1 ? (qtdTotal + ' etiquetas impressas!') : 'Etiqueta impressa!'));
+        abrirEtcHub('hub');
+      }
     }).catch(function(e) {
-      showToast('⚠️ Etiqueta impressa, mas houve erro ao registrar o log: ' + e.message);
-      document.getElementById('etc-input-codigo').value = '';
-      document.getElementById('etc-preview').innerHTML = '';
-      document.getElementById('etc-input-codigo').focus();
-      throw { _loggedAlready: true };
+      _etcImprimindo = false;
+      showToast('❌ Erro ao imprimir (' + impressas + ' de ' + qtdTotal + ' já impressas): ' + e.message);
+      if (btn) btn.disabled = false;
     });
-  }).then(function() {
-    showToast('✅ Etiqueta impressa!');
-    document.getElementById('etc-input-codigo').value = '';
-    document.getElementById('etc-preview').innerHTML = '';
-    document.getElementById('etc-input-codigo').focus();
-  }).catch(function(e) {
-    if (e && e._loggedAlready) return;
-    showToast('❌ Erro ao imprimir: ' + e.message);
-  }).then(function() {
-    // Roda sempre (sucesso ou erro tratado acima) — equivalente a um "finally"
-    // nesta cadeia baseada em .then()/.catch() sem async/await.
-    _etcImprimindo = false;
-    if (btn) btn.disabled = false;
-  });
+  }
+  imprimirUma();
 }
 
 // ── Etiquetas: fluxo de lote (mobile) — resolver preços, fila, conclusão ──
