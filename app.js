@@ -4547,8 +4547,10 @@ function parearImpressora() {
   }).then(function(chars) {
     _etcWriteChar = chars.filter(function(c){ return c.properties.write || c.properties.writeWithoutResponse; })[0];
     if (!_etcWriteChar) throw new Error('Nenhuma característica de escrita encontrada.');
-    var status = document.getElementById('etc-status-conexao');
-    if (status) status.textContent = '✅ Conectado em ' + (_etcDevice.name || 'impressora');
+    // Sem escrita em #etc-status-conexao aqui: _etcAtualizarStatusUI() logo
+    // abaixo re-renderiza renderEtcImpressora(), que recria esse container
+    // vazio e já mostra "Conectada: <nome>" no corpo do card — qualquer
+    // texto escrito antes disso nunca chega a aparecer.
     _etcAtualizarStatusUI();
     _etcDevice.addEventListener('gattserverdisconnected', function() {
       _etcWriteChar = null;
