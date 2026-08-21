@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '328';
+var BUILD = '330';
 var ETIQUETAS_API_URL = 'https://folding-cache-shaped-semi.trycloudflare.com'; // TEMP: túnel de teste local, não commitar
 (function() {
   var vEl = document.getElementById('sb-versao');
@@ -4562,7 +4562,11 @@ function _etcConectarNoDispositivo(d) {
       _etcWriteChar = null;
       _etcModoImprimirTudo = false;
       _etcAtualizarStatusUI();
-      if (_etcCurrentView === 'lote' && _loteAtualFila.length) renderFilaLote();
+      // Desconexão no meio de uma fila de lote: tela dedicada (seção 10 da
+      // spec) em vez do redraw genérico de renderFilaLote — a fila em si já
+      // preserva corretamente o que resta (imprimirProximoDaFila só usa
+      // .shift() depois de confirmar sucesso, nunca reimprime o que já saiu).
+      if (_etcCurrentView === 'lote' && _loteAtualFila.length) renderEtcFilaInterrompida();
     });
   });
 }
@@ -4625,13 +4629,51 @@ function _etcAtualizarStatusUI() {
     else renderEtcAvulsa();
   }
   else if (_etcCurrentView === 'lote') {
-    // Fila de impressão ativa: já tratada à parte (ver linha dedicada no
-    // handler gattserverdisconnected de parearImpressora) — não mexe aqui.
-    // Construtor "Montar novo lote" em andamento: não tem UI dependente da
-    // impressora, então redesenhar só jogaria a seleção do operador fora.
-    // Só o caso restante (tela de lotes pendentes) é seguro redesenhar —
-    // ela sim mostra o aviso "Conecte a impressora antes de imprimir".
-    if (!_loteAtualFila.length && !_etcMontandoLote) renderEtcLotes();
+    if (_etcFilaInterrompidaAtiva) {
+      // A tela de erro de desconexão está aberta — redesenhar é seguro (ela não
+      // guarda nenhuma seleção do operador, só lê _loteAtualFila/_etcWriteChar)
+      // e é o único jeito de reabilitar "Tentar novamente" depois que o
+      // operador reconecta sem sair da tela.
+      renderEtcFilaInterrompida();
+    }
+    // Fila de impressão ativa (renderFilaLote): um disconnect aqui sempre
+    // desvia pra renderEtcFilaInterrompida (ver handler gattserverdisconnected
+    // de parearImpressora, tratado pelo branch acima), então esta tela nunca
+    // fica parada aqui já desconectada — não mexe.
+    else if (_loteAtualFila.length) { /* no-op */ }
+    // Construtor "Montar novo lote" em andamento: redesenhar do zero jogaria
+    // a seleção do operador fora, mas o pill de status da impressora
+    // (Task 2) precisa acompanhar conectou/desconectou — atualiza só ele,
+    // via DOM direto, sem tocar no resto da tela.
+    else if (_etcMontandoLote) {
+      var pill = document.getElementById('etc-lote-status-impressora');
+      if (pill) {
+        pill.className = 'etc-pill ' + (_etcWriteChar ? 'etc-pill-on' : 'etc-pill-off');
+        pill.textContent = '🖨 ' + (_etcWriteChar ? '● Conectada' : '○ Desconectada');
+      }
+    }
+    // Revisão do lote em andamento: mesmo raciocínio do construtor acima —
+    // redesenhar do zero navegaria o operador pra fora da tela de revisão.
+    // Atualiza só o pill e o disabled/title do botão de imprimir, ao vivo.
+    else if (_etcRevisandoLote) {
+      var pillRevisao = document.getElementById('etc-revisao-status-impressora');
+      if (pillRevisao) {
+        pillRevisao.className = 'etc-pill ' + (_etcWriteChar ? 'etc-pill-on' : 'etc-pill-off');
+        pillRevisao.textContent = (_etcWriteChar ? '● Conectada' : '○ Desconectada');
+      }
+      var btnRevisao = document.getElementById('etc-revisao-imprimir-btn');
+      if (btnRevisao) {
+        btnRevisao.disabled = !_etcWriteChar;
+        btnRevisao.title = _etcWriteChar ? '' : 'Conecte a impressora primeiro';
+      }
+    }
+    // Tela de Histórico aberta: não há nada relacionado à impressora nessa
+    // tela pra atualizar ao vivo, e redesenhar do zero perderia a navegação
+    // do operador pela lista.
+    else if (_etcHistoricoAberto) { /* no-op — status da impressora não aparece na tela de Histórico, não precisa atualizar nada ao vivo */ }
+    // Caso restante (tela de lotes pendentes): seguro redesenhar — Revisão e
+    // a tela de erro de desconexão já são tratadas pelos branches acima.
+    else renderEtcLotes();
   }
   else if (_etcCurrentView === 'impressora') renderEtcImpressora();
 }
@@ -4898,11 +4940,21 @@ function _etcImprimirAvulsa(produto) {
 // nesta rodada) — os dois convivem, nenhum substitui o outro.
 function renderEtcLotes() {
   _etcMontandoLote = false;
+  _etcFilaInterrompidaAtiva = false;
+  _etcRevisandoLote = false;
+  _etcHistoricoAberto = false;
+  // Descarta qualquer fila de impressão abandonada de um lote anterior (ex.:
+  // operador abriu um lote da retaguarda e voltou sem imprimir) — sem isso
+  // ela sobrevive na memória e pode ser confundida com o lote em andamento
+  // se a impressora desconectar mais tarde (ver Finding 2 da revisão final).
+  _loteAtualId = null;
+  _loteAtualFila = [];
   var wrap = document.getElementById('etc-view-lote');
   wrap.innerHTML =
     '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="abrirEtcHub(\'hub\')">← Etiquetas e Consulta</button></div>' +
     (!_etcWriteChar ? '<div class="etc-aviso"><span>Conecte a impressora antes de imprimir.</span><a onclick="abrirEtcHub(\'impressora\')">Ir para Impressora</a></div>' : '') +
-    '<button class="btn btn-p" style="width:100%;margin-bottom:16px" onclick="renderEtcMontarLote()">+ Montar novo lote</button>' +
+    '<button class="btn btn-p" style="width:100%;margin-bottom:10px" onclick="_etcIniciarNovoLote()">+ Montar novo lote</button>' +
+    '<div style="text-align:right;margin-bottom:16px"><span style="font-size:12px;color:var(--t2);font-weight:700;cursor:pointer;text-decoration:underline" onclick="renderEtcHistoricoLote()">Histórico ›</span></div>' +
     '<div id="etc-lotes-pendentes"><div class="empty">Carregando lotes pendentes...</div></div>';
   db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_lote')
     .where('status', '==', 'pendente').get().then(function(snap) {
@@ -4922,6 +4974,53 @@ function renderEtcLotes() {
     });
 }
 
+// Histórico de lotes impressos (seção 13 da spec). Mesmo padrão de query já
+// usado em renderEtcHub (orderBy sem where, filtra em JS) — evita precisar
+// de um índice composto novo no Firestore (ver Global Constraints).
+function renderEtcHistoricoLote() {
+  _etcMontandoLote = false;
+  _etcFilaInterrompidaAtiva = false;
+  _etcRevisandoLote = false;
+  _etcHistoricoAberto = true;
+  var wrap = document.getElementById('etc-view-lote');
+  wrap.innerHTML =
+    '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="renderEtcLotes()">← Lotes pendentes</button></div>' +
+    '<div style="font-weight:700;font-size:15px;margin-bottom:12px">Histórico de lotes impressos</div>' +
+    '<div id="etc-lote-historico-list"><div class="empty">Carregando...</div></div>';
+  db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_log')
+    .orderBy('timestamp', 'desc').limit(200).get().then(function(snap) {
+      var listWrap = document.getElementById('etc-lote-historico-list');
+      if (!listWrap) return;
+      var docsLote = snap.docs.filter(function(d) { return d.data().origem === 'lote'; });
+      if (!docsLote.length) { listWrap.innerHTML = '<div class="empty">Nenhum lote impresso ainda.</div>'; return; }
+      // Agrupa por loteId (lotes da retaguarda) ou, na ausência dele, por
+      // loteSessaoId (lotes mockados/mobile — todas as etiquetas da mesma
+      // sessão de _etcGerarLoteMock compartilham o mesmo valor). Docs
+      // legados sem nenhum dos dois (de antes desta correção) caem pra
+      // d.id e viram sua própria linha, como sempre.
+      var grupos = {}; var ordem = [];
+      docsLote.forEach(function(d) {
+        var l = d.data();
+        var chave = l.loteId || l.loteSessaoId || d.id;
+        if (!grupos[chave]) { grupos[chave] = {timestamp: l.timestamp, qtdEtiquetas: 0, produtos: {}, operador: l.operadorNome}; ordem.push(chave); }
+        grupos[chave].qtdEtiquetas++;
+        grupos[chave].produtos[l.nomeProduto] = true;
+      });
+      listWrap.innerHTML = ordem.map(function(chave) {
+        var g = grupos[chave];
+        var quando = g.timestamp ? _etcFormatarRelativo(g.timestamp.toDate()) : '-';
+        var nProdutos = Object.keys(g.produtos).length;
+        return '<div class="etc-hub-recent-item">' +
+          '<div><div class="etc-hub-recent-name">' + quando + '</div><div class="etc-hub-recent-meta">' + nProdutos + (nProdutos === 1 ? ' produto' : ' produtos') + ' · ' + _escHtml(g.operador || '-') + '</div></div>' +
+          '<div style="text-align:right"><div class="etc-hub-recent-qtd">' + g.qtdEtiquetas + '</div><span class="etc-pill etc-pill-on" style="font-size:9.5px">✓ Impresso</span></div>' +
+        '</div>';
+      }).join('');
+    }).catch(function(e) {
+      var listWrap = document.getElementById('etc-lote-historico-list');
+      if (listWrap) listWrap.innerHTML = '<div class="empty">Erro ao carregar: ' + _escHtml(e.message) + '</div>';
+    });
+}
+
 // Catálogo temporário — a etiquetas-api hoje só expõe GET /produto/:codigo
 // (busca exata), sem endpoint de busca/filtro por Departamento/Setor/Marca.
 // Investigar o schema real do ERP (supermercado.itens + tabelas de grupo)
@@ -4929,12 +5028,12 @@ function renderEtcLotes() {
 // explícita do Tiago (spec 2026-08-20, Fora de escopo). Quando o endpoint
 // real existir, troca-se esta lista fixa por uma chamada de rede.
 var ETC_MOCK_PRODUTOS = [
-  {codigoBarras:'7891021001885', nome:'Melitta Filtro Papel 102', preco:5.69, departamento:'Mercearia', setor:'Café e Filtros', marca:'Melitta', estoque:24, precoAnterior:5.29},
-  {codigoBarras:'7891000100103', nome:'Arroz Tipo 1 5kg', preco:24.90, departamento:'Mercearia', setor:'Grãos', marca:'Tio João', estoque:40, precoAnterior:23.90},
-  {codigoBarras:'7896004004501', nome:'Feijão Carioca 1kg', preco:8.99, departamento:'Mercearia', setor:'Grãos', marca:'Camil', estoque:35, precoAnterior:8.49},
-  {codigoBarras:'7891910000197', nome:'Açúcar Cristal 1kg', preco:4.79, departamento:'Mercearia', setor:'Açúcar e Adoçante', marca:'União', estoque:60, precoAnterior:4.59},
-  {codigoBarras:'7896336010012', nome:'Café Extra Forte 500g', preco:16.90, departamento:'Mercearia', setor:'Café e Filtros', marca:'3 Corações', estoque:18, precoAnterior:15.90},
-  {codigoBarras:'7891000053001', nome:'Leite Integral 1L', preco:5.49, departamento:'Laticínios', setor:'Leites', marca:'Piracanjuba', estoque:50, precoAnterior:5.29}
+  {codigoBarras:'7891021001885', nome:'Melitta Filtro Papel 102', preco:5.69, departamento:'Mercearia', setor:'Café e Filtros', marca:'Melitta', estoque:24, precoAnterior:5.29, ativo:true},
+  {codigoBarras:'7891000100103', nome:'Arroz Tipo 1 5kg', preco:24.90, departamento:'Mercearia', setor:'Grãos', marca:'Tio João', estoque:40, precoAnterior:23.90, ativo:true},
+  {codigoBarras:'7896004004501', nome:'Feijão Carioca 1kg', preco:8.99, departamento:'Mercearia', setor:'Grãos', marca:'Camil', estoque:35, precoAnterior:8.49, ativo:true},
+  {codigoBarras:'7891910000197', nome:'Açúcar Cristal 1kg', preco:4.79, departamento:'Mercearia', setor:'Açúcar e Adoçante', marca:'União', estoque:60, precoAnterior:4.59, ativo:true},
+  {codigoBarras:'7896336010012', nome:'Café Extra Forte 500g', preco:16.90, departamento:'Mercearia', setor:'Café e Filtros', marca:'3 Corações', estoque:18, precoAnterior:15.90, ativo:true},
+  {codigoBarras:'7891000053001', nome:'Leite Integral 1L', preco:5.49, departamento:'Laticínios', setor:'Leites', marca:'Piracanjuba', estoque:50, precoAnterior:5.29, ativo:true}
 ];
 
 var _etcLoteSelecionados = {}; // codigoBarras -> {produto, qtd}
@@ -4950,77 +5049,234 @@ function _etcFiltrosUnicos(campo) {
   return out.sort();
 }
 
-function renderEtcMontarLote() {
+// Reseta a seleção e entra no construtor "Montar novo lote" — só este ponto
+// de entrada zera _etcLoteSelecionados. renderEtcMontarLote() sozinha NUNCA
+// zera (é chamada de volta pela Revisão, Task 4, "Voltar e Editar" — zerar
+// ali jogaria fora a seleção que o operador já tinha montado).
+function _etcIniciarNovoLote() {
   _etcLoteSelecionados = {};
+  renderEtcMontarLote();
+}
+
+function renderEtcMontarLote() {
   _etcMontandoLote = true;
+  _etcFilaInterrompidaAtiva = false;
+  _etcRevisandoLote = false;
+  _etcHistoricoAberto = false;
   var wrap = document.getElementById('etc-view-lote');
+  var temCamera = typeof ZXing !== 'undefined';
   wrap.innerHTML =
     '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="renderEtcLotes()">← Lotes pendentes</button></div>' +
-    '<input id="etc-lote-busca" placeholder="Buscar produtos..." style="width:100%;padding:12px;font-size:14px;margin-bottom:10px" oninput="_etcRenderListaLote()">' +
+    '<div style="font-weight:800;font-size:17px;margin-bottom:2px">Etiquetas em Lote</div>' +
+    '<div style="font-size:12.5px;color:var(--t3);margin-bottom:14px">Monte um lote com vários produtos para impressão.</div>' +
+    '<div style="display:flex;align-items:center;gap:6px;font-size:11.5px;color:var(--g);font-weight:700;margin-bottom:10px"><span>🟢</span> Modo Sequencial ATIVO — bipar adiciona automaticamente ao lote</div>' +
+    '<div class="card etc-bipar-card"' + (temCamera ? ' onclick="iniciarScanEAN(\'etc-lote-busca\')"' : ' style="opacity:.5;cursor:default"') + '>' +
+      '<div class="etc-bipar-icon">📷</div>' +
+      '<div><div class="etc-bipar-title">Bipar produto</div><div class="etc-bipar-desc">Aponte a câmera para o código de barras do produto</div></div>' +
+    '</div>' +
+    '<input id="etc-lote-busca" placeholder="🔎 Buscar por código ou nome do produto" style="width:100%;padding:12px;font-size:14px;margin-bottom:10px">' +
     '<div class="etc-filter-row">' +
       '<select id="etc-lote-filtro-depto" onchange="_etcRenderListaLote()"><option value="">Departamento</option>' + _etcFiltrosUnicos('departamento').map(function(v){return '<option value="'+_escHtml(v)+'">'+_escHtml(v)+'</option>';}).join('') + '</select>' +
       '<select id="etc-lote-filtro-setor" onchange="_etcRenderListaLote()"><option value="">Setor</option>' + _etcFiltrosUnicos('setor').map(function(v){return '<option value="'+_escHtml(v)+'">'+_escHtml(v)+'</option>';}).join('') + '</select>' +
       '<select id="etc-lote-filtro-marca" onchange="_etcRenderListaLote()"><option value="">Marca</option>' + _etcFiltrosUnicos('marca').map(function(v){return '<option value="'+_escHtml(v)+'">'+_escHtml(v)+'</option>';}).join('') + '</select>' +
     '</div>' +
+    '<label style="display:flex;align-items:center;gap:8px;margin:2px 0 10px;font-size:12.5px;color:var(--t2);cursor:pointer">' +
+      '<input type="checkbox" id="etc-lote-filtro-ativos" checked onchange="_etcRenderListaLote()"> Somente produtos ativos' +
+    '</label>' +
+    '<div style="display:flex;gap:16px;margin-bottom:10px;font-size:12px">' +
+      '<span style="color:var(--g);font-weight:700;cursor:pointer;text-decoration:underline" onclick="_etcSelecionarTodosLote()">Selecionar todos</span>' +
+      '<span style="color:var(--t3);font-weight:700;cursor:pointer;text-decoration:underline" onclick="_etcLimparSelecaoLote()">Limpar seleção</span>' +
+    '</div>' +
     '<div id="etc-lote-lista"></div>' +
-    '<div class="etc-sticky-bar">' +
-      '<span id="etc-lote-contagem" style="font-size:12.5px;color:var(--t3)">0 produtos selecionados</span>' +
-      '<button class="btn btn-p" id="etc-lote-gerar-btn" disabled onclick="_etcGerarLoteMock()">Gerar Etiquetas</button>' +
+    '<div class="etc-sticky-bar" style="flex-direction:column;align-items:stretch;gap:8px">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center">' +
+        '<span id="etc-lote-contagem" style="font-size:12.5px;color:var(--t3)">0 produtos selecionados · 0 etiquetas</span>' +
+        '<span id="etc-lote-status-impressora" class="etc-pill ' + (_etcWriteChar ? 'etc-pill-on' : 'etc-pill-off') + '">🖨 ' + (_etcWriteChar ? '● Conectada' : '○ Desconectada') + '</span>' +
+      '</div>' +
+      '<button class="btn btn-p" id="etc-lote-gerar-btn" disabled style="width:100%" onclick="renderEtcRevisaoLote()">REVISAR LOTE</button>' +
     '</div>';
+  var input = document.getElementById('etc-lote-busca');
+  var timer = null;
+  input.addEventListener('input', function() {
+    clearTimeout(timer);
+    timer = setTimeout(function() { _etcRenderListaLote(); }, 250);
+  });
+  // Bipagem (iniciarScanEAN) e Enter manual disparam o mesmo caminho: se o
+  // texto bate um código EXATO do catálogo, adiciona/incrementa direto no
+  // lote (seção 5 da spec) — texto parcial só filtra a lista abaixo.
+  input.addEventListener('keydown', function(e) {
+    if (e.key !== 'Enter') return;
+    clearTimeout(timer);
+    var valor = input.value.trim();
+    var match = ETC_MOCK_PRODUTOS.filter(function(p) { return p.codigoBarras === valor; })[0];
+    if (match) {
+      input.value = '';
+      _etcAdicionarProdutoAoLote(match);
+      showToast('+ ' + match.nome + ' adicionado ao lote');
+    }
+    _etcRenderListaLote();
+  });
   _etcRenderListaLote();
+  _etcAtualizarBarraLote();
 }
 
-function _etcRenderListaLote() {
-  var busca = (document.getElementById('etc-lote-busca').value || '').toLowerCase();
-  var depto = document.getElementById('etc-lote-filtro-depto').value;
-  var setor = document.getElementById('etc-lote-filtro-setor').value;
-  var marca = document.getElementById('etc-lote-filtro-marca').value;
-  var filtrados = ETC_MOCK_PRODUTOS.filter(function(p) {
+// Filtro central: busca + Departamento/Setor/Marca/Ativos. Único lugar que
+// decide "quais produtos do catálogo aparecem agora" — reaproveitado por
+// _etcRenderListaLote (pra desenhar a lista) e _etcSelecionarTodosLote (pra
+// saber o que marcar em massa), garantindo que os dois nunca divirjam.
+function _etcProdutosFiltrados() {
+  var buscaEl = document.getElementById('etc-lote-busca');
+  var deptoEl = document.getElementById('etc-lote-filtro-depto');
+  var setorEl = document.getElementById('etc-lote-filtro-setor');
+  var marcaEl = document.getElementById('etc-lote-filtro-marca');
+  var ativosEl = document.getElementById('etc-lote-filtro-ativos');
+  var busca = (buscaEl ? buscaEl.value : '').toLowerCase();
+  var depto = deptoEl ? deptoEl.value : '';
+  var setor = setorEl ? setorEl.value : '';
+  var marca = marcaEl ? marcaEl.value : '';
+  var somenteAtivos = ativosEl ? ativosEl.checked : true;
+  return ETC_MOCK_PRODUTOS.filter(function(p) {
     if (busca && p.nome.toLowerCase().indexOf(busca) === -1 && p.codigoBarras.indexOf(busca) === -1) return false;
     if (depto && p.departamento !== depto) return false;
     if (setor && p.setor !== setor) return false;
     if (marca && p.marca !== marca) return false;
+    if (somenteAtivos && p.ativo === false) return false;
     return true;
   });
+}
+
+function _etcRenderListaLote() {
+  var filtrados = _etcProdutosFiltrados();
   var lista = document.getElementById('etc-lote-lista');
+  if (!lista) return; // debounce de busca (250ms) pode disparar depois do operador já ter saído da tela
   if (!filtrados.length) { lista.innerHTML = '<div class="empty">Nenhum produto encontrado.</div>'; return; }
   lista.innerHTML = filtrados.map(function(p) {
     var sel = _etcLoteSelecionados[p.codigoBarras];
     var checked = sel ? 'checked' : '';
-    var qtd = sel ? sel.qtd : 1;
-    return '<div class="etc-check-item">' +
+    if (!sel) {
+      return '<div class="etc-check-item">' +
+        '<input type="checkbox" onchange="_etcToggleLoteItem(' + _escHtml(JSON.stringify(p)) + ', this.checked)">' +
+        '<div class="etc-check-item-body">' +
+          '<div class="etc-check-item-name">' + _escHtml(p.nome) + '</div>' +
+          '<div class="etc-check-item-meta">Código: ' + _escHtml(p.codigoBarras) + ' · R$ ' + p.preco.toFixed(2) + '</div>' +
+        '</div>' +
+      '</div>';
+    }
+    // Item selecionado: mostra stepper de quantidade + botão de remover, no
+    // lugar do checkbox simples (seções 3/4 da spec).
+    return '<div class="etc-lote-item">' +
       '<input type="checkbox" ' + checked + ' onchange="_etcToggleLoteItem(' + _escHtml(JSON.stringify(p)) + ', this.checked)">' +
-      '<div class="etc-check-item-body">' +
-        '<div class="etc-check-item-name">' + _escHtml(p.nome) + '</div>' +
-        '<div class="etc-check-item-meta">Código: ' + _escHtml(p.codigoBarras) + ' · R$ ' + p.preco.toFixed(2) + '</div>' +
+      '<div class="etc-lote-item-body">' +
+        '<div class="etc-lote-item-name">' + _escHtml(p.nome) + '</div>' +
+        '<div class="etc-lote-item-meta">Código: ' + _escHtml(p.codigoBarras) + ' · R$ ' + p.preco.toFixed(2) + '</div>' +
       '</div>' +
-      '<input type="number" class="etc-check-item-qtd" min="1" value="' + qtd + '" ' + (sel ? '' : 'disabled') + ' onchange="_etcAtualizarQtdLoteItem(\'' + _escHtml(p.codigoBarras) + '\', this.value)">' +
+      '<div class="etc-lote-item-actions">' +
+        '<div class="etc-stepper" style="margin:0;gap:8px">' +
+          '<button onclick="_etcAlterarQtdLoteItem(\'' + _escHtml(p.codigoBarras) + '\', -1)">−</button>' +
+          '<span class="etc-stepper-val">' + sel.qtd + '</span>' +
+          '<button onclick="_etcAlterarQtdLoteItem(\'' + _escHtml(p.codigoBarras) + '\', 1)">+</button>' +
+        '</div>' +
+        '<button class="etc-lote-item-remove" onclick="_etcRemoverProdutoDoLote(\'' + _escHtml(p.codigoBarras) + '\')">✕</button>' +
+      '</div>' +
     '</div>';
   }).join('');
 }
 
 function _etcToggleLoteItem(produto, marcado) {
-  if (marcado) {
-    _etcLoteSelecionados[produto.codigoBarras] = {produto: produto, qtd: 1};
-  } else {
-    delete _etcLoteSelecionados[produto.codigoBarras];
-  }
+  if (marcado) _etcAdicionarProdutoAoLote(produto);
+  else _etcRemoverProdutoDoLote(produto.codigoBarras);
+}
+
+// Bipar/marcar um produto já presente no lote incrementa a quantidade em 1
+// (seção 5 da spec) em vez de duplicar a linha; produto novo entra com qtd 1
+// (seção 4).
+function _etcAdicionarProdutoAoLote(produto) {
+  var atual = _etcLoteSelecionados[produto.codigoBarras];
+  if (atual) atual.qtd++;
+  else _etcLoteSelecionados[produto.codigoBarras] = {produto: produto, qtd: 1};
   _etcAtualizarBarraLote();
   _etcRenderListaLote();
 }
 
-function _etcAtualizarQtdLoteItem(codigo, valor) {
-  var qtd = Math.max(1, parseInt(valor, 10) || 1);
-  if (_etcLoteSelecionados[codigo]) _etcLoteSelecionados[codigo].qtd = qtd;
+function _etcAlterarQtdLoteItem(codigo, delta) {
+  var sel = _etcLoteSelecionados[codigo];
+  if (!sel) return;
+  sel.qtd = Math.max(1, sel.qtd + delta);
   _etcAtualizarBarraLote();
+  _etcRenderListaLote();
+}
+
+function _etcRemoverProdutoDoLote(codigo) {
+  delete _etcLoteSelecionados[codigo];
+  _etcAtualizarBarraLote();
+  _etcRenderListaLote();
+}
+
+// "Selecionar todos" opera só sobre o que está visível no filtro atual —
+// produto já selecionado mantém a quantidade que o operador já tinha ajustado.
+function _etcSelecionarTodosLote() {
+  _etcProdutosFiltrados().forEach(function(p) {
+    if (!_etcLoteSelecionados[p.codigoBarras]) _etcLoteSelecionados[p.codigoBarras] = {produto: p, qtd: 1};
+  });
+  _etcAtualizarBarraLote();
+  _etcRenderListaLote();
+}
+
+// "Limpar seleção" zera o lote inteiro, mesmo itens fora do filtro atual —
+// é um reset total, não só do que está visível (diferente de "Selecionar todos").
+function _etcLimparSelecaoLote() {
+  _etcLoteSelecionados = {};
+  _etcAtualizarBarraLote();
+  _etcRenderListaLote();
 }
 
 function _etcAtualizarBarraLote() {
-  var n = Object.keys(_etcLoteSelecionados).length;
+  var itens = Object.keys(_etcLoteSelecionados).map(function(k) { return _etcLoteSelecionados[k]; });
+  var nProdutos = itens.length;
+  var nEtiquetas = itens.reduce(function(s, it) { return s + it.qtd; }, 0);
   var contagem = document.getElementById('etc-lote-contagem');
   var btn = document.getElementById('etc-lote-gerar-btn');
-  if (contagem) contagem.textContent = n + (n === 1 ? ' produto selecionado' : ' produtos selecionados');
-  if (btn) { btn.disabled = n === 0; btn.textContent = 'Gerar Etiquetas' + (n ? ' (' + n + ')' : ''); }
+  if (contagem) contagem.textContent = nProdutos + (nProdutos === 1 ? ' produto selecionado' : ' produtos selecionados') + ' · ' + nEtiquetas + (nEtiquetas === 1 ? ' etiqueta' : ' etiquetas');
+  if (btn) btn.disabled = nProdutos === 0;
+}
+
+// Etapa de revisão (seção 8 da spec): mostra a lista final antes de imprimir
+// de fato. "Voltar e Editar" volta pra renderEtcMontarLote() SEM resetar
+// _etcLoteSelecionados (só _etcIniciarNovoLote, Task 2, reseta).
+function renderEtcRevisaoLote() {
+  // _etcMontandoLote precisa ser zerado aqui — sem isso ele fica true (deixado
+  // por renderEtcMontarLote) enquanto o operador está na Revisão, e o branch
+  // "else if (_etcMontandoLote)" de _etcAtualizarStatusUI (que vem antes do
+  // branch "else if (_etcRevisandoLote)" na cadeia) intercepta o disconnect
+  // silenciosamente, reproduzindo o bug original (ver Finding 3 da revisão final).
+  _etcMontandoLote = false;
+  _etcFilaInterrompidaAtiva = false;
+  _etcRevisandoLote = true;
+  _etcHistoricoAberto = false;
+  var itens = Object.keys(_etcLoteSelecionados).map(function(k) { return _etcLoteSelecionados[k]; });
+  if (!itens.length) { renderEtcMontarLote(); return; }
+  var nProdutos = itens.length;
+  var nEtiquetas = itens.reduce(function(s, it) { return s + it.qtd; }, 0);
+  var wrap = document.getElementById('etc-view-lote');
+  wrap.innerHTML =
+    '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="renderEtcMontarLote()">← Voltar e Editar</button></div>' +
+    '<div class="card" style="padding:18px;margin-bottom:16px">' +
+      '<div style="font-weight:700;font-size:15px;margin-bottom:2px">Revisão do lote</div>' +
+      '<div style="font-size:12.5px;color:var(--t3);margin-bottom:14px">' + nProdutos + (nProdutos === 1 ? ' produto' : ' produtos') + ' · ' + nEtiquetas + (nEtiquetas === 1 ? ' etiqueta' : ' etiquetas') + '</div>' +
+      itens.map(function(it) {
+        return '<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--gray2);font-size:13.5px">' +
+          '<span>' + _escHtml(it.produto.nome) + '</span><span style="font-weight:700">' + it.qtd + '</span>' +
+        '</div>';
+      }).join('') +
+      '<div style="display:flex;align-items:center;gap:8px;padding-top:12px;font-size:13px;color:var(--t2)">' +
+        '🖨 ' + (_etcDevice ? _escHtml(_etcDevice.name) : 'Urovo K329') +
+        '<span id="etc-revisao-status-impressora" class="etc-pill ' + (_etcWriteChar ? 'etc-pill-on' : 'etc-pill-off') + '" style="margin-left:auto">' + (_etcWriteChar ? '● Conectada' : '○ Desconectada') + '</span>' +
+      '</div>' +
+    '</div>' +
+    '<div class="btn-row">' +
+      '<button class="btn btn-s" style="flex:1" onclick="renderEtcMontarLote()">Voltar e Editar</button>' +
+      '<button class="btn btn-p" id="etc-revisao-imprimir-btn" style="flex:1" ' + (_etcWriteChar ? '' : 'disabled title="Conecte a impressora primeiro"') + ' onclick="_etcGerarLoteMock()">🖨 Imprimir Lote</button>' +
+    '</div>';
 }
 
 // Monta a fila de impressão direto da seleção mockada, sem gravar um
@@ -5050,11 +5306,14 @@ function _etcGerarLoteMock() {
     // abrirLoteParaImpressao anterior permanecem intactos e consistentes,
     // em vez de virar um id nulo com fila de um lote real (ver Fix C).
     _loteAtualId = null;
+    _loteSessaoId = 'm' + Date.now();
     _loteAtualFila = [];
     resolvidos.forEach(function(r) {
       if (!r.produto) return;
       for (var i = 0; i < r.item.qtd; i++) _loteAtualFila.push(r.produto);
     });
+    _etcFilaTotal = _loteAtualFila.length;
+    _etcFilaImpressasCount = 0;
     renderFilaLote();
   }).catch(function(e) {
     wrap.innerHTML = '<div class="empty">Erro ao carregar: ' + _escHtml(e.message) + '</div><button class="btn btn-s btn-sm" onclick="renderEtcLotes()">Voltar</button>';
@@ -5062,11 +5321,34 @@ function _etcGerarLoteMock() {
 }
 
 var _loteAtualId = null, _loteAtualFila = [];
+// Id de sessão minerado no cliente (client-minted) pra lotes montados no
+// fluxo mobile (_etcGerarLoteMock, sem documento etiquetas_lote na
+// retaguarda) — permite ao Histórico agrupar as etiquetas da mesma sessão
+// numa única linha. loteId continua sendo a fonte da verdade pros lotes
+// reais da retaguarda; este campo fica null nesse caso (ver abrirLoteParaImpressao).
+var _loteSessaoId = null;
+// true enquanto a tela de erro de desconexão (renderEtcFilaInterrompida)
+// está aberta — permite a _etcAtualizarStatusUI saber quando é seguro
+// redesenhá-la ao vivo (reconectar deve reabilitar "Tentar novamente").
+var _etcFilaInterrompidaAtiva = false;
+// true enquanto a tela de Revisão do lote (renderEtcRevisaoLote) está
+// aberta — permite a _etcAtualizarStatusUI atualizar o pill/botão de
+// impressora ao vivo sem redesenhar a tela inteira (que perderia a revisão
+// em andamento e navegaria o operador pra fora dela).
+var _etcRevisandoLote = false;
+// true enquanto a tela de Histórico está aberta — evita que
+// _etcAtualizarStatusUI troque a tela ao vivo quando o status da
+// impressora muda.
+var _etcHistoricoAberto = false;
 var _etcModoImprimirTudo = false; // true durante o loop automático de "Imprimir tudo"
-var _etcFilaTotal = 0; // tamanho da fila no início do "Imprimir tudo", pro contador "X de Y"
+var _etcFilaTotal = 0; // tamanho da fila no início desta impressão, pro contador "X de Y" e a barra de progresso
+var _etcFilaImpressasCount = 0; // quantas etiquetas desta fila já foram impressas com sucesso — zerado toda vez que uma fila nova começa
 
 function abrirLoteParaImpressao(loteId) {
   _loteAtualId = loteId;
+  // Lote real da retaguarda: nunca deve carregar um _loteSessaoId de um lote
+  // mockado (mobile) anterior — ver Finding 1 da revisão final.
+  _loteSessaoId = null;
   var wrap = document.getElementById('etc-view-lote');
   wrap.innerHTML = '<div class="empty">Resolvendo preços...</div>';
   db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_lote').doc(loteId).get()
@@ -5086,6 +5368,8 @@ function abrirLoteParaImpressao(loteId) {
         if (!r.produto) return;
         for (var i = 0; i < r.item.qtdEtiquetas; i++) _loteAtualFila.push(r.produto);
       });
+      _etcFilaTotal = _loteAtualFila.length;
+      _etcFilaImpressasCount = 0;
       renderFilaLote();
     }).catch(function(e) {
       wrap.innerHTML = '<div class="empty">Erro ao carregar: ' + _escHtml(e.message) + '</div>';
@@ -5094,19 +5378,52 @@ function abrirLoteParaImpressao(loteId) {
 
 function renderFilaLote() {
   _etcMontandoLote = false;
+  _etcFilaInterrompidaAtiva = false;
+  _etcRevisandoLote = false;
+  _etcHistoricoAberto = false;
   var wrap = document.getElementById('etc-view-lote');
   if (!_loteAtualFila.length) {
     wrap.innerHTML = '<div class="empty">Fila vazia ou todos os produtos falharam ao resolver.</div><button class="btn btn-s btn-sm" onclick="renderEtcLotes()">Voltar</button>';
     return;
   }
   var disabledAttr = _etcWriteChar ? '' : 'disabled title="Conecte a impressora primeiro"';
+  var pct = _etcFilaTotal ? Math.round((_etcFilaImpressasCount / _etcFilaTotal) * 100) : 0;
   wrap.innerHTML = '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="renderEtcLotes()">← Lotes pendentes</button></div>' +
-    '<div style="margin-bottom:10px">Restam ' + _loteAtualFila.length + ' etiquetas.</div>' +
+    '<div style="font-weight:700;font-size:14px;margin-bottom:6px">Imprimindo etiquetas...</div>' +
+    '<div class="pbar"><div class="pfill" id="etc-fila-progresso-fill" style="width:' + pct + '%;background:var(--dk2)"></div></div>' +
+    '<div style="margin:8px 0 14px;font-size:12.5px;color:var(--t3)">' + _etcFilaImpressasCount + ' de ' + _etcFilaTotal + ' etiquetas</div>' +
     '<div class="btn-row">' +
       '<button class="btn btn-p" style="flex:1" ' + disabledAttr + ' onclick="imprimirProximoDaFila()">Imprimir próxima</button>' +
       '<button class="btn btn-s" style="flex:1" ' + disabledAttr + ' onclick="imprimirTudoDaFila()">Imprimir tudo</button>' +
     '</div>' +
-    '<div id="etc-fila-progresso" style="margin-top:10px;font-size:12.5px;color:var(--t3)"></div>';
+    '<div id="etc-fila-progresso" style="margin-top:10px;font-size:12.5px;color:var(--t3)"></div>' +
+    '<div style="margin-top:6px;display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--t2)">🖨 ' + (_etcDevice ? _escHtml(_etcDevice.name) : 'Urovo K329') +
+      '<span class="etc-pill ' + (_etcWriteChar ? 'etc-pill-on' : 'etc-pill-off') + '">' + (_etcWriteChar ? '● Conectada' : '○ Desconectada') + '</span></div>';
+}
+
+// Tela dedicada de desconexão no meio da impressão (seção 10 da spec).
+// _loteAtualFila já contém só o que resta (imprimirProximoDaFila nunca
+// remove um item antes de confirmar que ele saiu fisicamente) — "Tentar
+// novamente" só continua de onde parou, nunca reimprime o que já saiu.
+function renderEtcFilaInterrompida() {
+  _etcMontandoLote = false;
+  _etcFilaInterrompidaAtiva = true;
+  _etcRevisandoLote = false;
+  _etcHistoricoAberto = false;
+  var wrap = document.getElementById('etc-view-lote');
+  var impressas = _etcFilaImpressasCount;
+  var total = _etcFilaTotal || (impressas + _loteAtualFila.length);
+  wrap.innerHTML =
+    '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="renderEtcLotes()">← Lotes pendentes</button></div>' +
+    '<div class="card" style="padding:22px;text-align:center">' +
+      '<div style="font-size:15px;font-weight:700;color:var(--r);margin-bottom:10px">⚠ Impressão interrompida</div>' +
+      '<div style="font-size:13px;color:var(--t2);margin-bottom:4px">A impressora ' + (_etcDevice ? _escHtml(_etcDevice.name) : 'Urovo K329') + ' foi desconectada.</div>' +
+      '<div style="font-size:13px;color:var(--t3);margin-bottom:18px">' + impressas + ' de ' + total + ' etiquetas foram impressas.</div>' +
+      '<div class="btn-row" style="justify-content:center">' +
+        '<button class="btn btn-p" onclick="parearImpressora()">Conectar impressora</button>' +
+        '<button class="btn btn-s" ' + (_etcWriteChar ? '' : 'disabled title="Conecte a impressora primeiro"') + ' onclick="imprimirTudoDaFila()">Tentar novamente</button>' +
+      '</div>' +
+    '</div>';
 }
 
 // Avança a fila (item já foi fisicamente impresso, o log pode ou não ter sido gravado)
@@ -5117,13 +5434,13 @@ function _avancarFilaLoteAposImpressao() {
     if (!_loteAtualId) {
       // Lote mockado (montado na Coleta via _etcGerarLoteMock, Task 7) —
       // não existe documento etiquetas_lote pra atualizar.
-      showToast('✅ Lote concluído!');
+      showToast('✓ Lote impresso com sucesso — ' + _etcFilaImpressasCount + ' etiquetas impressas');
       renderEtcLotes();
       return Promise.resolve();
     }
     return db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_lote').doc(_loteAtualId)
       .update({status: 'concluido'}).then(function() {
-        showToast('✅ Lote concluído!');
+        showToast('✓ Lote impresso com sucesso — ' + _etcFilaImpressasCount + ' etiquetas impressas');
         renderEtcLotes();
       }).catch(function(e) {
         // A fila já terminou de imprimir; só a atualização do status do lote falhou.
@@ -5162,11 +5479,13 @@ function imprimirProximoDaFila() {
       precoImpresso: produto.preco,
       origem: 'lote',
       loteId: _loteAtualId,
+      loteSessaoId: _loteSessaoId,
       operadorId: S.currentUser ? S.currentUser.id : null,
       operadorNome: S.currentUser ? S.currentUser.nome : '-',
       timestamp: firebase.firestore.FieldValue.serverTimestamp()
     }).then(function() {
       // Impressão e log OK: avança a fila normalmente.
+      _etcFilaImpressasCount++;
       return _avancarFilaLoteAposImpressao();
     }, function(e) {
       // A etiqueta já saiu da impressora — não reimprimir. Avança a fila mesmo
@@ -5179,6 +5498,7 @@ function imprimirProximoDaFila() {
       // enganoso ("erro ao registrar o log: undefined") e uma segunda chamada a
       // _avancarFilaLoteAposImpressao() reprocessando a fila já vazia.
       showToast('⚠️ Etiqueta impressa, mas houve erro ao registrar o log: ' + e.message);
+      _etcFilaImpressasCount++;
       return _avancarFilaLoteAposImpressao().then(function() {
         throw { _loggedAlready: true };
       });
@@ -5220,7 +5540,6 @@ function imprimirProximoDaFila() {
 function imprimirTudoDaFila() {
   if (!_loteAtualFila.length || _etcImprimindo) return;
   _etcModoImprimirTudo = true;
-  _etcFilaTotal = _loteAtualFila.length;
   imprimirProximoDaFila();
 }
 
