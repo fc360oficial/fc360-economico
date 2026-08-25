@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '330';
+var BUILD = '332';
 var ETIQUETAS_API_URL = 'https://folding-cache-shaped-semi.trycloudflare.com'; // TEMP: túnel de teste local, não commitar
 (function() {
   var vEl = document.getElementById('sb-versao');
@@ -4510,11 +4510,286 @@ function renderEtiquetasHistorico() {
     });
 }
 
+// ── PrinterManager: camada central de conexão/impressão Bluetooth ──────────
+// Única fonte de verdade do estado da impressora Urovo K329. Não troca a
+// tecnologia (Web Bluetooth, GATT, comando TSPL) nem o protocolo — só
+// absorve o que já existia espalhado (_etcConectarNoDispositivo,
+// parearImpressora, _etcTentarReconectarAutomatico, imprimirEtiquetaBluetooth)
+// numa camada só, com log e reconexão em 3 níveis (spec do Tiago, 2026-08-21,
+// ver docs/superpowers/specs/2026-08-21-printer-manager-design.md).
+//
+// LIMITAÇÃO CONHECIDA (Web Bluetooth + PWA + Android): a conexão GATT exige
+// a página em primeiro plano. Quando o Chrome congela o Fluxo em segundo
+// plano ou a tela do Android bloqueia, a conexão cai — isso é comportamento
+// da própria plataforma, não do PrinterManager, e não é resolvido aqui
+// (fora de escopo, decisão explícita do Tiago). O cenário coberto é o
+// operador com o Fluxo aberto em primeiro plano durante a operação de loja.
+var PrinterManager = {
+  ESTADOS: {
+    DESCONECTADO: 'disconnected',
+    CONECTANDO: 'connecting',
+    CONECTADO: 'connected',
+    IMPRIMINDO: 'printing',
+    RECONECTANDO: 'reconnecting',
+    ERRO: 'error'
+  },
+  _state: 'disconnected',
+  _device: null,
+  _gattServer: null,
+  _writeChar: null,
+  _uiListener: null,
+
+  _log: function(msg) { console.log('[PrinterManager] ' + msg); },
+  _logError: function(msg, err) { console.error('[PrinterManager] ' + msg, err); },
+
+  // Único ponto de redraw da UI (Task 1, wiring no fim deste arquivo) —
+  // reaproveita _etcAtualizarStatusUI() tal como está, não cria um segundo
+  // mecanismo de notificação.
+  setUIListener: function(cb) { this._uiListener = cb; },
+
+  _setState: function(novo) {
+    this._state = novo;
+    this._log('Estado: ' + novo);
+    if (this._uiListener) this._uiListener();
+  },
+
+  getState: function() { return this._state; },
+
+  // "Pronta pra imprimir agora, sem tentar nada" — usado por telas que só
+  // querem saber se podem pular direto pro Nível 1 (ex.: mostrar o pill).
+  isReady: function() { return this._state === this.ESTADOS.CONECTADO || this._state === this.ESTADOS.IMPRIMINDO; },
+
+  // Controla se um botão de imprimir/conectar deve ficar clicável — falso
+  // durante estados transitórios (já tentando algo) e no erro (Nível 3 já
+  // esgotado, precisa de ação manual explícita via connect()).
+  podeTentarImprimir: function() {
+    return this._state === this.ESTADOS.DESCONECTADO || this._state === this.ESTADOS.CONECTADO;
+  },
+
+  getDeviceName: function() { return this._device ? this._device.name : null; },
+
+  // Texto/cor padronizados do pill (🟢/🟡/🔴, spec item 3) — único lugar que
+  // decide isso, todas as 6 telas devem chamar aqui em vez de montar o pill
+  // na mão.
+  getStatusDisplay: function() {
+    var nome = (this._device && this._device.name) || 'Urovo K329';
+    if (this._state === this.ESTADOS.CONECTADO || this._state === this.ESTADOS.IMPRIMINDO) {
+      return {emoji: '🟢', texto: 'Conectada', pillCls: 'etc-pill-on', nome: nome};
+    }
+    if (this._state === this.ESTADOS.CONECTANDO || this._state === this.ESTADOS.RECONECTANDO) {
+      return {emoji: '🟡', texto: (this._state === this.ESTADOS.RECONECTANDO ? 'Reconectando...' : 'Conectando...'), pillCls: 'etc-pill-warn', nome: nome};
+    }
+    return {emoji: '🔴', texto: 'Desconectada', pillCls: 'etc-pill-off', nome: nome};
+  }
+  ,
+  _erro: function(motivo, detalhe) {
+    var e = new Error(detalhe || motivo);
+    e.motivo = motivo;
+    return e;
+  },
+
+  // Conecta no GATT de um BluetoothDevice já obtido (via requestDevice, no
+  // pareamento manual, ou via getDevices, na reconexão automática) e resolve
+  // a característica de escrita — corpo idêntico ao antigo
+  // _etcConectarNoDispositivo, só movido pra dentro do PrinterManager.
+  _connectToDevice: function(d) {
+    var self = this;
+    self._device = d;
+    self._setState(self.ESTADOS.CONECTANDO);
+    self._log('Dispositivo selecionado: ' + (d.name || '(sem nome)'));
+    return d.gatt.connect().then(function(server) {
+      self._gattServer = server;
+      self._log('GATT conectado');
+      return server.getPrimaryServices();
+    }).then(function(services) {
+      return services[0].getCharacteristics();
+    }).then(function(chars) {
+      self._writeChar = chars.filter(function(c){ return c.properties.write || c.properties.writeWithoutResponse; })[0];
+      if (!self._writeChar) throw new Error('Nenhuma característica de escrita encontrada.');
+      try { localStorage.setItem('etc_impressora_id', d.id); } catch (e) {}
+      self._setState(self.ESTADOS.CONECTADO);
+      self._log('Pronta pra imprimir: ' + (d.name || d.id));
+      // O mesmo objeto BluetoothDevice é reaproveitado entre reconexões (Web
+      // Bluetooth devolve a mesma instância pro mesmo dispositivo já
+      // autorizado) — sem esta guarda, cada reconexão empilharia mais um
+      // listener, disparando renderEtcFilaInterrompida() N vezes numa única
+      // desconexão real (revisão final da branch, Minor #10).
+      if (!d._printerManagerDisconnectBound) {
+        d._printerManagerDisconnectBound = true;
+        d.addEventListener('gattserverdisconnected', function() {
+          self._log('Desconectada (gattserverdisconnected)');
+          self._writeChar = null;
+          self._gattServer = null;
+          _etcModoImprimirTudo = false;
+          self._setState(self.ESTADOS.DESCONECTADO);
+          if (_etcCurrentView === 'lote' && _loteAtualFila.length) renderEtcFilaInterrompida();
+        });
+      }
+    }).catch(function(e) {
+      self._logError('Falha ao conectar no dispositivo', e);
+      self._setState(self.ESTADOS.ERRO);
+      throw e;
+    });
+  },
+
+  // Abre o seletor nativo do Chrome — único caminho manual (Nível 3 da spec,
+  // "CONECTAR IMPRESSORA"). Corpo idêntico ao antigo parearImpressora.
+  connect: function() {
+    var self = this;
+    self._log('Abrindo seletor de pareamento manual');
+    return navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: CANDIDATOS_IMPRESSORA
+    }).then(function(d) { return self._connectToDevice(d); }).catch(function(e) {
+      self._logError('Pareamento manual falhou/cancelado', e);
+      // Operador cancelou o seletor do Chrome — não é um erro, não mostra nada.
+      if (e && e.name === 'NotFoundError') return;
+      var status = document.getElementById('etc-status-conexao');
+      if (status) status.textContent = '❌ ' + self._mapErroAmigavel(self._erro('SELECAO_FALHOU')).message;
+    });
+  },
+
+  // Garante que _writeChar está pronta antes de imprimir — 3 níveis (spec do
+  // Tiago, 2026-08-21): (1) já conectada → resolve na hora, sem abrir nada;
+  // (2) getDevices() encontra o dispositivo salvo → reconecta sozinho, sem
+  // interação; (3) getDevices() não existe/não encontra → rejeita com um
+  // motivo tipado, pra tela mostrar "Conectar Impressora" (nunca fica
+  // tentando de novo sozinho).
+  _ensureConnected: function() {
+    var self = this;
+    if (self._state === self.ESTADOS.CONECTADO && self._writeChar) {
+      return Promise.resolve();
+    }
+    if (self._state === self.ESTADOS.RECONECTANDO || self._state === self.ESTADOS.CONECTANDO) {
+      return Promise.reject(self._erro('JA_RECONECTANDO', 'Reconexão já em andamento.'));
+    }
+    if (!navigator.bluetooth || typeof navigator.bluetooth.getDevices !== 'function') {
+      self._setState(self.ESTADOS.DESCONECTADO);
+      return Promise.reject(self._erro('SEM_SUPORTE', 'Este navegador não suporta reconexão automática.'));
+    }
+    var idSalvo;
+    try { idSalvo = localStorage.getItem('etc_impressora_id'); } catch (e) { idSalvo = null; }
+    if (!idSalvo) {
+      self._setState(self.ESTADOS.DESCONECTADO);
+      return Promise.reject(self._erro('SEM_DISPOSITIVO_SALVO', 'Nenhuma impressora pareada anteriormente.'));
+    }
+    self._setState(self.ESTADOS.RECONECTANDO);
+    self._log('Tentando reconexão automática (getDevices)');
+    return navigator.bluetooth.getDevices().then(function(devices) {
+      var device = devices.filter(function(d) { return d.id === idSalvo; })[0];
+      if (!device) {
+        self._logError('getDevices() não encontrou a impressora salva', null);
+        self._setState(self.ESTADOS.ERRO);
+        throw self._erro('DISPOSITIVO_NAO_ENCONTRADO', 'Impressora salva não está mais disponível.');
+      }
+      return self._connectToDevice(device);
+    }).catch(function(e) {
+      if (e && e.motivo) throw e;
+      self._logError('Falha na reconexão automática (getDevices)', e);
+      self._setState(self.ESTADOS.ERRO);
+      throw self._erro('RECONEXAO_FALHOU', e && e.message);
+    });
+  },
+
+  // Chamada ao entrar no módulo Etiquetas — tenta recuperar uma impressora já
+  // autorizada antes, sem interação do operador (Nível 2). Nunca abre o
+  // seletor manual sozinha; falha em silêncio no console (não mostra toast a
+  // cada entrada no módulo — o pill "🔴 Desconectada" já comunica isso
+  // passivamente, decisão registrada no spec) — o operador sempre pode
+  // conectar manualmente pela aba Impressora.
+  init: function() {
+    var self = this;
+    if (self._state === self.ESTADOS.CONECTADO) return;
+    self._ensureConnected().catch(function(e) {
+      self._log('init(): reconexão automática não disponível (' + (e && e.motivo) + ') — aguardando ação manual.');
+    });
+  }
+  ,
+  // Escreve o comando TSPL de fato — corpo idêntico ao antigo
+  // imprimirEtiquetaBluetooth, só movido pra dentro do PrinterManager.
+  _writeToDevice: function(produto) {
+    var self = this;
+    if (!self._writeChar) return Promise.reject(self._erro('NAO_CONECTADA', 'Impressora não conectada.'));
+    return etiquetasLayoutDoc().get().then(function(doc) {
+      var layout = doc.exists ? doc.data() : null;
+      var tspl = montarComandoTSPL(produto, layout);
+      var bytes = new TextEncoder().encode(tspl);
+      self._log('Enviando etiqueta: ' + produto.nome);
+      return self._writeChar.writeValue(bytes);
+    }).then(function() {
+      self._log('Impressão concluída: ' + produto.nome);
+    });
+  },
+
+  // Ponto de entrada único de impressão, usado por Avulsa, Avulsa
+  // Sequencial, Lote (via imprimirProximoDaFila) e Consulta — spec do
+  // Tiago, itens 6/7. _etcImprimindo (global já existente, usado por todo o
+  // módulo desde antes deste refactor) é o único cadeado contra escrita
+  // concorrente — não criar um segundo lock aqui. "Fila", no sentido do
+  // item 7, continua sendo o array próprio do Lote (_loteAtualFila); este
+  // método garante só que nenhuma escrita física roda em paralelo com
+  // outra, de qualquer tela (ver spec, seção "Decisões de design").
+  printLabel: function(produto) {
+    var self = this;
+    if (_etcImprimindo) {
+      return Promise.reject(self._mapErroAmigavel(self._erro('OCUPADA')));
+    }
+    _etcImprimindo = true;
+    return self._ensureConnected().then(function() {
+      self._setState(self.ESTADOS.IMPRIMINDO);
+      return self._writeToDevice(produto);
+    }).then(function() {
+      self._setState(self.ESTADOS.CONECTADO);
+    }).catch(function(e) {
+      self._logError('Falha ao imprimir', e);
+      // Só escala pra ERRO quando a conexão realmente caiu (_writeChar nulo —
+      // o handler de gattserverdisconnected já teria feito essa transição
+      // sozinho). Uma falha pontual de escrita ou do Firestore com o GATT
+      // ainda vivo não pode travar o resto da fila em ERRO — mantém CONECTADO
+      // pra permitir retry imediato sem reimprimir o que já saiu (revisão
+      // final da branch, Critical #1).
+      if (!self._writeChar) {
+        if (self._state !== self.ESTADOS.ERRO && self._state !== self.ESTADOS.DESCONECTADO) self._setState(self.ESTADOS.ERRO);
+      } else if (self._state === self.ESTADOS.IMPRIMINDO) {
+        self._setState(self.ESTADOS.CONECTADO);
+      }
+      throw self._mapErroAmigavel(e);
+    }).then(function(r) {
+      _etcImprimindo = false;
+      return r;
+    }, function(e) {
+      _etcImprimindo = false;
+      throw e;
+    });
+  },
+
+  // Traduz motivos internos (Nível 1/2/3, GATT, DOMException) pra mensagens
+  // que fazem sentido pro operador — nunca mostrar UUID/GATT/characteristic/
+  // DOMException na tela (spec, item 14). Detalhe técnico completo já foi
+  // pro console via _logError antes de chegar aqui.
+  _mapErroAmigavel: function(e) {
+    var motivo = e && e.motivo;
+    var textos = {
+      SEM_SUPORTE: 'Não foi possível reconectar automaticamente. Conecte a impressora manualmente.',
+      SEM_DISPOSITIVO_SALVO: 'Nenhuma impressora pareada ainda. Conecte a impressora.',
+      DISPOSITIVO_NAO_ENCONTRADO: 'Não foi possível encontrar a Urovo K329. Conecte a impressora.',
+      RECONEXAO_FALHOU: 'Não foi possível reconectar à impressora.',
+      NAO_CONECTADA: 'Impressora não conectada.',
+      OCUPADA: 'Aguarde a impressão em andamento terminar.',
+      JA_RECONECTANDO: 'Reconectando à impressora, aguarde.',
+      SELECAO_FALHOU: 'Não foi possível conectar à impressora selecionada.'
+    };
+    var msg = (motivo && textos[motivo]) || 'Não foi possível imprimir a etiqueta.';
+    var err = new Error(msg);
+    err.motivo = motivo || 'DESCONHECIDO';
+    return err;
+  }
+};
+
 // ── Etiquetas: coleta (mobile) — pareamento Bluetooth + impressão ──
-var _etcDevice = null, _etcGattServer = null, _etcWriteChar = null;
 // Trava contra impressão duplicada: um duplo-toque no botão de imprimir
 // (plausível em coletor com lag de UI) dispararia duas chamadas concorrentes
-// de imprimirEtiquetaBluetooth e imprimiria a etiqueta física duas vezes.
+// de PrinterManager.printLabel e imprimiria a etiqueta física duas vezes.
 var _etcImprimindo = false;
 
 var _etcCurrentView = 'hub'; // hub | avulsa | lote | consulta | impressora
@@ -4537,93 +4812,25 @@ function abrirEtcHub(view) {
 
 var CANDIDATOS_IMPRESSORA = ['49535343-fe7d-4ae5-8fa9-9fafd205e455'];
 
-// Conecta no GATT de um BluetoothDevice já obtido (via requestDevice, no
-// pareamento manual, ou via getDevices, na reconexão automática) e resolve
-// a característica de escrita. Reaproveitado pelos dois fluxos abaixo.
-function _etcConectarNoDispositivo(d) {
-  _etcDevice = d;
-  return d.gatt.connect().then(function(server) {
-    _etcGattServer = server;
-    return server.getPrimaryServices();
-  }).then(function(services) {
-    return services[0].getCharacteristics();
-  }).then(function(chars) {
-    _etcWriteChar = chars.filter(function(c){ return c.properties.write || c.properties.writeWithoutResponse; })[0];
-    if (!_etcWriteChar) throw new Error('Nenhuma característica de escrita encontrada.');
-    // Guarda o id do dispositivo pra _etcTentarReconectarAutomatico tentar
-    // reconectar sozinho da próxima vez que o app abrir, sem seletor.
-    try { localStorage.setItem('etc_impressora_id', d.id); } catch (e) {}
-    // Sem escrita em #etc-status-conexao aqui: _etcAtualizarStatusUI() logo
-    // abaixo re-renderiza renderEtcImpressora(), que recria esse container
-    // vazio e já mostra "Conectada: <nome>" no corpo do card — qualquer
-    // texto escrito antes disso nunca chega a aparecer.
-    _etcAtualizarStatusUI();
-    d.addEventListener('gattserverdisconnected', function() {
-      _etcWriteChar = null;
-      _etcModoImprimirTudo = false;
-      _etcAtualizarStatusUI();
-      // Desconexão no meio de uma fila de lote: tela dedicada (seção 10 da
-      // spec) em vez do redraw genérico de renderFilaLote — a fila em si já
-      // preserva corretamente o que resta (imprimirProximoDaFila só usa
-      // .shift() depois de confirmar sucesso, nunca reimprime o que já saiu).
-      if (_etcCurrentView === 'lote' && _loteAtualFila.length) renderEtcFilaInterrompida();
-    });
-  });
-}
-
-function parearImpressora() {
-  navigator.bluetooth.requestDevice({
-    acceptAllDevices: true,
-    optionalServices: CANDIDATOS_IMPRESSORA
-  }).then(_etcConectarNoDispositivo).catch(function(e) {
-    var status = document.getElementById('etc-status-conexao');
-    if (status) status.textContent = '❌ Erro: ' + e.message;
-  });
-}
-
-// Tenta reconectar sozinho, sem abrir o seletor do navegador, num
-// dispositivo já pareado numa sessão anterior — usa a Permissions API do
-// Web Bluetooth (getDevices), disponível só em Chrome/Android recente. Onde
-// não tem suporte, ou não há dispositivo salvo, falha em silêncio: o
-// operador sempre pode conectar manualmente pela aba Impressora.
-function _etcTentarReconectarAutomatico() {
-  if (_etcWriteChar) return;
-  if (!navigator.bluetooth || typeof navigator.bluetooth.getDevices !== 'function') {
-    showToast('⚠️ Este navegador não suporta reconexão automática — conecte a impressora manualmente.');
-    return;
-  }
-  var idSalvo;
-  try { idSalvo = localStorage.getItem('etc_impressora_id'); } catch (e) { return; }
-  if (!idSalvo) return;
-  navigator.bluetooth.getDevices().then(function(devices) {
-    var device = devices.filter(function(d) { return d.id === idSalvo; })[0];
-    if (!device) {
-      showToast('⚠️ Impressora salva não está mais disponível — conecte manualmente.');
-      return;
-    }
-    return _etcConectarNoDispositivo(device);
-  }).catch(function(e) {
-    console.warn('[etiquetas] Reconexão automática falhou: ' + e.message);
-    showToast('⚠️ Não consegui reconectar sozinho na impressora (' + e.message + '). Conecte manualmente.');
-  });
-}
+function _etcTentarReconectarAutomatico() { return PrinterManager.init(); }
 
 // Re-renderiza a view atual quando o estado da impressora muda (conectou,
-// desconectou) — cada view decide sozinha o que fazer com _etcWriteChar
-// (desabilitar botão, mostrar aviso, etc.), esta função só dispara o redraw.
+// desconectou) — cada view decide sozinha o que fazer com o estado do
+// PrinterManager (desabilitar botão, mostrar aviso, etc.), esta função só
+// dispara o redraw.
 //
 // avulsa e lote recebem tratamento especial: um redraw cego (chamar
 // renderEtcAvulsa()/renderEtcLotes() direto) reconstrói a tela do zero e
 // descarta estado em memória que não sobrevive a um re-render completo — o
 // card de produto escaneado na Avulsa, ou a seleção em andamento no
 // construtor "Montar novo lote". Nenhuma dessas duas telas de conteúdo
-// (card da Avulsa, construtor do Lote) de fato exibe UI dependente de
-// _etcWriteChar, então é seguro pular o redraw cego nesses casos.
+// (card da Avulsa, construtor do Lote) de fato exibe UI dependente do
+// PrinterManager, então é seguro pular o redraw cego nesses casos.
 function _etcAtualizarStatusUI() {
   if (_etcCurrentView === 'hub') renderEtcHub();
   else if (_etcCurrentView === 'avulsa') {
-    // Produto carregado: re-renderiza só o card (não depende de _etcWriteChar
-    // e preserva o produto/quantidade). Sem produto: tela em branco, redraw
+    // Produto carregado: re-renderiza só o card (não depende do estado do
+    // PrinterManager e preserva o produto/quantidade). Sem produto: tela em branco, redraw
     // completo é seguro (só recria input vazio + aviso de impressora).
     if (_etcAvulsaProdutoAtual) _etcRenderAvulsaCard(_etcAvulsaProdutoAtual);
     else renderEtcAvulsa();
@@ -4631,15 +4838,15 @@ function _etcAtualizarStatusUI() {
   else if (_etcCurrentView === 'lote') {
     if (_etcFilaInterrompidaAtiva) {
       // A tela de erro de desconexão está aberta — redesenhar é seguro (ela não
-      // guarda nenhuma seleção do operador, só lê _loteAtualFila/_etcWriteChar)
+      // guarda nenhuma seleção do operador, só lê _loteAtualFila/PrinterManager)
       // e é o único jeito de reabilitar "Tentar novamente" depois que o
       // operador reconecta sem sair da tela.
       renderEtcFilaInterrompida();
     }
     // Fila de impressão ativa (renderFilaLote): um disconnect aqui sempre
     // desvia pra renderEtcFilaInterrompida (ver handler gattserverdisconnected
-    // de parearImpressora, tratado pelo branch acima), então esta tela nunca
-    // fica parada aqui já desconectada — não mexe.
+    // do PrinterManager, em _connectToDevice, tratado pelo branch acima), então
+    // esta tela nunca fica parada aqui já desconectada — não mexe.
     else if (_loteAtualFila.length) { /* no-op */ }
     // Construtor "Montar novo lote" em andamento: redesenhar do zero jogaria
     // a seleção do operador fora, mas o pill de status da impressora
@@ -4648,8 +4855,9 @@ function _etcAtualizarStatusUI() {
     else if (_etcMontandoLote) {
       var pill = document.getElementById('etc-lote-status-impressora');
       if (pill) {
-        pill.className = 'etc-pill ' + (_etcWriteChar ? 'etc-pill-on' : 'etc-pill-off');
-        pill.textContent = '🖨 ' + (_etcWriteChar ? '● Conectada' : '○ Desconectada');
+        var st = PrinterManager.getStatusDisplay();
+        pill.className = 'etc-pill ' + st.pillCls;
+        pill.textContent = '🖨 ' + st.emoji + ' ' + st.texto;
       }
     }
     // Revisão do lote em andamento: mesmo raciocínio do construtor acima —
@@ -4658,13 +4866,14 @@ function _etcAtualizarStatusUI() {
     else if (_etcRevisandoLote) {
       var pillRevisao = document.getElementById('etc-revisao-status-impressora');
       if (pillRevisao) {
-        pillRevisao.className = 'etc-pill ' + (_etcWriteChar ? 'etc-pill-on' : 'etc-pill-off');
-        pillRevisao.textContent = (_etcWriteChar ? '● Conectada' : '○ Desconectada');
+        var stRevisao = PrinterManager.getStatusDisplay();
+        pillRevisao.className = 'etc-pill ' + stRevisao.pillCls;
+        pillRevisao.textContent = stRevisao.emoji + ' ' + stRevisao.texto;
       }
       var btnRevisao = document.getElementById('etc-revisao-imprimir-btn');
       if (btnRevisao) {
-        btnRevisao.disabled = !_etcWriteChar;
-        btnRevisao.title = _etcWriteChar ? '' : 'Conecte a impressora primeiro';
+        btnRevisao.disabled = !PrinterManager.podeTentarImprimir();
+        btnRevisao.title = PrinterManager.podeTentarImprimir() ? '' : 'Conecte a impressora primeiro';
       }
     }
     // Tela de Histórico aberta: não há nada relacionado à impressora nessa
@@ -4678,13 +4887,19 @@ function _etcAtualizarStatusUI() {
   else if (_etcCurrentView === 'impressora') renderEtcImpressora();
 }
 
+PrinterManager.setUIListener(_etcAtualizarStatusUI);
+
 function renderEtcImpressora() {
   var wrap = document.getElementById('etc-view-impressora');
+  var st = PrinterManager.getStatusDisplay();
+  var estadoAtual = PrinterManager.getState();
+  var transitorio = estadoAtual === PrinterManager.ESTADOS.CONECTANDO || estadoAtual === PrinterManager.ESTADOS.RECONECTANDO;
+  var mensagem = PrinterManager.isReady() ? ('Conectada: ' + _escHtml(st.nome)) : (transitorio ? st.emoji + ' ' + st.texto : st.emoji + ' Conecte na impressora pra poder imprimir.');
   wrap.innerHTML =
     '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="abrirEtcHub(\'hub\')">← Etiquetas e Consulta</button></div>' +
     '<div class="card" style="padding:20px;text-align:center">' +
-      '<p style="margin-bottom:12px;color:var(--t3);font-size:13px">' + (_etcWriteChar ? ('Conectada: ' + _escHtml(_etcDevice ? _etcDevice.name : '')) : 'Conecte na impressora pra poder imprimir.') + '</p>' +
-      '<button class="btn btn-p" onclick="parearImpressora()">' + (_etcWriteChar ? 'Conectar em outra impressora' : 'Conectar na impressora') + '</button>' +
+      '<p style="margin-bottom:12px;color:var(--t3);font-size:13px">' + mensagem + '</p>' +
+      '<button class="btn btn-p" onclick="PrinterManager.connect()">' + (PrinterManager.isReady() ? 'Conectar em outra impressora' : 'Conectar na impressora') + '</button>' +
       '<div id="etc-status-conexao" style="margin-top:10px;font-size:13px"></div>' +
     '</div>' +
     '<p style="margin-top:14px;font-size:12px;color:var(--t3);text-align:center">Mantenha a impressora ligada e próxima ao dispositivo para garantir a conexão.</p>';
@@ -4692,8 +4907,9 @@ function renderEtcImpressora() {
 
 function renderEtcHub() {
   var wrap = document.getElementById('etc-view-hub');
-  var statusImpressora = _etcWriteChar ? '● Conectada' : '○ Desconectada';
-  var statusCls = _etcWriteChar ? 'etc-pill-on' : 'etc-pill-off';
+  var stHub = PrinterManager.getStatusDisplay();
+  var statusImpressora = stHub.emoji + ' ' + stHub.texto;
+  var statusCls = stHub.pillCls;
   wrap.innerHTML =
     '<div class="etc-hub-grid">' +
       '<div class="etc-hub-card" onclick="abrirEtcHub(\'avulsa\')">' +
@@ -4779,16 +4995,6 @@ function montarComandoTSPL(produto, layout) {
   return linhas.join('\r\n') + '\r\n';
 }
 
-function imprimirEtiquetaBluetooth(produto) {
-  if (!_etcWriteChar) return Promise.reject(new Error('Impressora não conectada.'));
-  return etiquetasLayoutDoc().get().then(function(doc) {
-    var layout = doc.exists ? doc.data() : null;
-    var tspl = montarComandoTSPL(produto, layout);
-    var bytes = new TextEncoder().encode(tspl);
-    return _etcWriteChar.writeValue(bytes);
-  });
-}
-
 // ── Etiquetas: Etiqueta Avulsa (mobile) — bipar → imprimir direto, sempre 1 etiqueta ──
 // Produto atualmente carregado no card da Avulsa (null = tela em branco,
 // aguardando bipagem). Usado por _etcAtualizarStatusUI pra re-renderizar só
@@ -4811,7 +5017,7 @@ function renderEtcAvulsa() {
   var seqChecked = _etcAvulsaSequencialAtivo() ? 'checked' : '';
   wrap.innerHTML =
     '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="abrirEtcHub(\'hub\')">← Etiquetas e Consulta</button></div>' +
-    (!_etcWriteChar ? '<div class="etc-aviso"><span>Conecte a impressora antes de imprimir.</span><a onclick="abrirEtcHub(\'impressora\')">Ir para Impressora</a></div>' : '') +
+    (!PrinterManager.isReady() ? '<div class="etc-aviso"><span>Conecte a impressora antes de imprimir.</span><a onclick="abrirEtcHub(\'impressora\')">Ir para Impressora</a></div>' : '') +
     '<label style="display:flex;align-items:center;gap:8px;margin-bottom:12px;font-size:13px;color:var(--t2);cursor:pointer">' +
       '<input type="checkbox" id="etc-avulsa-sequencial" ' + seqChecked + ' onchange="_etcAlternarSequencial(this.checked)"> Modo sequencial (imprime assim que ler o produto)' +
     '</label>' +
@@ -4858,7 +5064,7 @@ function buscarProdutoAvulsa(codigo) {
     if (!resp.ok) throw new Error('Erro ao consultar o ERP.');
     return resp.json();
   }).then(function(produto) {
-    _etcRenderAvulsaCard(produto);
+    _etcRenderAvulsaCard(produto, true);
   }).catch(function(e) {
     preview.innerHTML = '<div class="empty">' + _escHtml(e.message) + '</div>';
   });
@@ -4869,17 +5075,18 @@ function buscarProdutoAvulsa(codigo) {
 // Tiago: quantidade só existe em Etiquetas em Lote). Em modo sequencial,
 // com impressora conectada, imprime sozinho assim que o card renderiza —
 // sem esperar toque no botão.
-function _etcRenderAvulsaCard(produto) {
+function _etcRenderAvulsaCard(produto, viaBipagem) {
   _etcAvulsaProdutoAtual = produto;
   var preview = document.getElementById('etc-avulsa-preview');
   var produtoJson = _escHtml(JSON.stringify(produto));
   // Marca só aparece quando o código bate com o catálogo mockado (Task 7) —
   // a etiquetas-api real não retorna esse campo ainda. Nunca inventar.
   var mock = ETC_MOCK_PRODUTOS.filter(function(p) { return p.codigoBarras === produto.codigoBarras; })[0];
-  var statusImpressora = _etcWriteChar
-    ? '<div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-top:1px solid var(--gray2);margin-top:6px;font-size:12.5px;color:var(--t2)">🖨 ' + _escHtml(_etcDevice ? _etcDevice.name : 'Impressora') + '<span class="etc-pill etc-pill-on" style="margin-left:auto">● Conectada</span></div>'
-    : '<div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-top:1px solid var(--gray2);margin-top:6px;font-size:12.5px;color:var(--t2)">⚠ Impressora desconectada<a onclick="abrirEtcHub(\'impressora\')" style="margin-left:auto;color:var(--am);font-weight:700;text-decoration:underline;cursor:pointer">Conectar impressora</a></div>';
-  var disabledAttr = _etcWriteChar ? '' : 'disabled title="Conecte a impressora primeiro"';
+  var status = PrinterManager.getStatusDisplay();
+  var statusImpressora = PrinterManager.isReady()
+    ? '<div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-top:1px solid var(--gray2);margin-top:6px;font-size:12.5px;color:var(--t2)">🖨 ' + _escHtml(status.nome) + '<span class="etc-pill ' + status.pillCls + '" style="margin-left:auto">' + status.emoji + ' ' + status.texto + '</span></div>'
+    : '<div style="display:flex;align-items:center;gap:8px;padding:10px 0;border-top:1px solid var(--gray2);margin-top:6px;font-size:12.5px;color:var(--t2)">' + status.emoji + ' Impressora ' + status.texto.toLowerCase() + '<a onclick="abrirEtcHub(\'impressora\')" style="margin-left:auto;color:var(--am);font-weight:700;text-decoration:underline;cursor:pointer">Conectar impressora</a></div>';
+  var disabledAttr = PrinterManager.podeTentarImprimir() ? '' : 'disabled title="Conecte a impressora primeiro"';
   preview.innerHTML =
     '<div class="card" style="padding:16px">' +
       '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px;margin-bottom:4px">' +
@@ -4893,7 +5100,12 @@ function _etcRenderAvulsaCard(produto) {
       statusImpressora +
       '<button class="btn btn-p" style="width:100%" ' + disabledAttr + ' onclick="_etcImprimirAvulsa(' + produtoJson + ')">🖨 Imprimir Etiqueta</button>' +
     '</div>';
-  if (_etcWriteChar && _etcAvulsaSequencialAtivo() && !_etcImprimindo) {
+  // Só dispara sozinho quando esta renderização veio de uma bipagem nova
+  // (buscarProdutoAvulsa passa viaBipagem=true) — uma mudança de status da
+  // impressora também chama esta função pra atualizar o pill (via
+  // _etcAtualizarStatusUI), e não pode reimprimir um produto que já estava
+  // na tela por conta própria (revisão final da branch, Important #5).
+  if (viaBipagem && _etcAvulsaSequencialAtivo() && !_etcImprimindo) {
     _etcImprimirAvulsa(produto);
   }
 }
@@ -4902,11 +5114,9 @@ function _etcRenderAvulsaCard(produto) {
 // limpa o card e devolve o foco pro input — pronto pro próximo bip (é o que
 // viabiliza o modo sequencial, e agiliza mesmo no modo manual).
 function _etcImprimirAvulsa(produto) {
-  if (_etcImprimindo) return;
-  _etcImprimindo = true;
   var btn = document.querySelector('#etc-avulsa-preview .btn-p');
   if (btn) btn.disabled = true;
-  imprimirEtiquetaBluetooth(produto).then(function() {
+  PrinterManager.printLabel(produto).then(function() {
     return db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_log').add({
       codigoBarras: produto.codigoBarras,
       nomeProduto: produto.nome,
@@ -4920,15 +5130,13 @@ function _etcImprimirAvulsa(produto) {
       showToast('⚠️ Etiqueta impressa, mas houve erro ao registrar o log: ' + e.message);
     });
   }).then(function() {
-    _etcImprimindo = false;
-    showToast('✓ Etiqueta enviada para ' + (_etcDevice ? _etcDevice.name : 'a impressora'));
+    showToast('✓ Etiqueta enviada para ' + (PrinterManager.getDeviceName() || 'a impressora'));
     _etcAvulsaProdutoAtual = null;
     var preview = document.getElementById('etc-avulsa-preview');
     if (preview) preview.innerHTML = '';
     var input = document.getElementById('etc-input-codigo');
     if (input) { input.value = ''; input.focus(); }
   }).catch(function(e) {
-    _etcImprimindo = false;
     showToast('❌ Erro ao imprimir: ' + e.message);
     if (btn) btn.disabled = false;
   });
@@ -4952,7 +5160,7 @@ function renderEtcLotes() {
   var wrap = document.getElementById('etc-view-lote');
   wrap.innerHTML =
     '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="abrirEtcHub(\'hub\')">← Etiquetas e Consulta</button></div>' +
-    (!_etcWriteChar ? '<div class="etc-aviso"><span>Conecte a impressora antes de imprimir.</span><a onclick="abrirEtcHub(\'impressora\')">Ir para Impressora</a></div>' : '') +
+    (!PrinterManager.isReady() ? '<div class="etc-aviso"><span>Conecte a impressora antes de imprimir.</span><a onclick="abrirEtcHub(\'impressora\')">Ir para Impressora</a></div>' : '') +
     '<button class="btn btn-p" style="width:100%;margin-bottom:10px" onclick="_etcIniciarNovoLote()">+ Montar novo lote</button>' +
     '<div style="text-align:right;margin-bottom:16px"><span style="font-size:12px;color:var(--t2);font-weight:700;cursor:pointer;text-decoration:underline" onclick="renderEtcHistoricoLote()">Histórico ›</span></div>' +
     '<div id="etc-lotes-pendentes"><div class="empty">Carregando lotes pendentes...</div></div>';
@@ -5038,7 +5246,7 @@ var ETC_MOCK_PRODUTOS = [
 
 var _etcLoteSelecionados = {}; // codigoBarras -> {produto, qtd}
 // true enquanto o construtor "Montar novo lote" (busca/filtro/checkbox) está
-// na tela. Essa tela não tem nenhuma UI dependente de _etcWriteChar — usado
+// na tela. Essa tela não tem nenhuma UI dependente do PrinterManager — usado
 // por _etcAtualizarStatusUI pra não descartar a seleção em andamento quando
 // o status da impressora muda (ver renderEtcMontarLote/renderEtcLotes/renderFilaLote).
 var _etcMontandoLote = false;
@@ -5091,7 +5299,7 @@ function renderEtcMontarLote() {
     '<div class="etc-sticky-bar" style="flex-direction:column;align-items:stretch;gap:8px">' +
       '<div style="display:flex;justify-content:space-between;align-items:center">' +
         '<span id="etc-lote-contagem" style="font-size:12.5px;color:var(--t3)">0 produtos selecionados · 0 etiquetas</span>' +
-        '<span id="etc-lote-status-impressora" class="etc-pill ' + (_etcWriteChar ? 'etc-pill-on' : 'etc-pill-off') + '">🖨 ' + (_etcWriteChar ? '● Conectada' : '○ Desconectada') + '</span>' +
+        '<span id="etc-lote-status-impressora" class="etc-pill ' + PrinterManager.getStatusDisplay().pillCls + '">🖨 ' + PrinterManager.getStatusDisplay().emoji + ' ' + PrinterManager.getStatusDisplay().texto + '</span>' +
       '</div>' +
       '<button class="btn btn-p" id="etc-lote-gerar-btn" disabled style="width:100%" onclick="renderEtcRevisaoLote()">REVISAR LOTE</button>' +
     '</div>';
@@ -5269,13 +5477,13 @@ function renderEtcRevisaoLote() {
         '</div>';
       }).join('') +
       '<div style="display:flex;align-items:center;gap:8px;padding-top:12px;font-size:13px;color:var(--t2)">' +
-        '🖨 ' + (_etcDevice ? _escHtml(_etcDevice.name) : 'Urovo K329') +
-        '<span id="etc-revisao-status-impressora" class="etc-pill ' + (_etcWriteChar ? 'etc-pill-on' : 'etc-pill-off') + '" style="margin-left:auto">' + (_etcWriteChar ? '● Conectada' : '○ Desconectada') + '</span>' +
+        '🖨 ' + _escHtml(PrinterManager.getStatusDisplay().nome) +
+        '<span id="etc-revisao-status-impressora" class="etc-pill ' + PrinterManager.getStatusDisplay().pillCls + '" style="margin-left:auto">' + PrinterManager.getStatusDisplay().emoji + ' ' + PrinterManager.getStatusDisplay().texto + '</span>' +
       '</div>' +
     '</div>' +
     '<div class="btn-row">' +
       '<button class="btn btn-s" style="flex:1" onclick="renderEtcMontarLote()">Voltar e Editar</button>' +
-      '<button class="btn btn-p" id="etc-revisao-imprimir-btn" style="flex:1" ' + (_etcWriteChar ? '' : 'disabled title="Conecte a impressora primeiro"') + ' onclick="_etcGerarLoteMock()">🖨 Imprimir Lote</button>' +
+      '<button class="btn btn-p" id="etc-revisao-imprimir-btn" style="flex:1" ' + (PrinterManager.podeTentarImprimir() ? '' : 'disabled title="Conecte a impressora primeiro"') + ' onclick="_etcGerarLoteMock()">🖨 Imprimir Lote</button>' +
     '</div>';
 }
 
@@ -5386,7 +5594,7 @@ function renderFilaLote() {
     wrap.innerHTML = '<div class="empty">Fila vazia ou todos os produtos falharam ao resolver.</div><button class="btn btn-s btn-sm" onclick="renderEtcLotes()">Voltar</button>';
     return;
   }
-  var disabledAttr = _etcWriteChar ? '' : 'disabled title="Conecte a impressora primeiro"';
+  var disabledAttr = PrinterManager.podeTentarImprimir() ? '' : 'disabled title="Conecte a impressora primeiro"';
   var pct = _etcFilaTotal ? Math.round((_etcFilaImpressasCount / _etcFilaTotal) * 100) : 0;
   wrap.innerHTML = '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="renderEtcLotes()">← Lotes pendentes</button></div>' +
     '<div style="font-weight:700;font-size:14px;margin-bottom:6px">Imprimindo etiquetas...</div>' +
@@ -5397,8 +5605,8 @@ function renderFilaLote() {
       '<button class="btn btn-s" style="flex:1" ' + disabledAttr + ' onclick="imprimirTudoDaFila()">Imprimir tudo</button>' +
     '</div>' +
     '<div id="etc-fila-progresso" style="margin-top:10px;font-size:12.5px;color:var(--t3)"></div>' +
-    '<div style="margin-top:6px;display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--t2)">🖨 ' + (_etcDevice ? _escHtml(_etcDevice.name) : 'Urovo K329') +
-      '<span class="etc-pill ' + (_etcWriteChar ? 'etc-pill-on' : 'etc-pill-off') + '">' + (_etcWriteChar ? '● Conectada' : '○ Desconectada') + '</span></div>';
+    '<div style="margin-top:6px;display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--t2)">🖨 ' + _escHtml(PrinterManager.getStatusDisplay().nome) +
+      '<span class="etc-pill ' + PrinterManager.getStatusDisplay().pillCls + '">' + PrinterManager.getStatusDisplay().emoji + ' ' + PrinterManager.getStatusDisplay().texto + '</span></div>';
 }
 
 // Tela dedicada de desconexão no meio da impressão (seção 10 da spec).
@@ -5417,11 +5625,11 @@ function renderEtcFilaInterrompida() {
     '<div class="etc-sub-topbar"><button class="etc-topbar-back" onclick="renderEtcLotes()">← Lotes pendentes</button></div>' +
     '<div class="card" style="padding:22px;text-align:center">' +
       '<div style="font-size:15px;font-weight:700;color:var(--r);margin-bottom:10px">⚠ Impressão interrompida</div>' +
-      '<div style="font-size:13px;color:var(--t2);margin-bottom:4px">A impressora ' + (_etcDevice ? _escHtml(_etcDevice.name) : 'Urovo K329') + ' foi desconectada.</div>' +
+      '<div style="font-size:13px;color:var(--t2);margin-bottom:4px">A impressora ' + _escHtml(PrinterManager.getStatusDisplay().nome) + ' foi desconectada.</div>' +
       '<div style="font-size:13px;color:var(--t3);margin-bottom:18px">' + impressas + ' de ' + total + ' etiquetas foram impressas.</div>' +
       '<div class="btn-row" style="justify-content:center">' +
-        '<button class="btn btn-p" onclick="parearImpressora()">Conectar impressora</button>' +
-        '<button class="btn btn-s" ' + (_etcWriteChar ? '' : 'disabled title="Conecte a impressora primeiro"') + ' onclick="imprimirTudoDaFila()">Tentar novamente</button>' +
+        '<button class="btn btn-p" onclick="PrinterManager.connect()">Conectar impressora</button>' +
+        '<button class="btn btn-s" ' + (PrinterManager.podeTentarImprimir() ? '' : 'disabled title="Conecte a impressora primeiro"') + ' onclick="imprimirTudoDaFila()">Tentar novamente</button>' +
       '</div>' +
     '</div>';
 }
@@ -5463,7 +5671,6 @@ function _avancarFilaLoteAposImpressao() {
 function imprimirProximoDaFila() {
   if (!_loteAtualFila.length) { _etcModoImprimirTudo = false; return; }
   if (_etcImprimindo) return;
-  _etcImprimindo = true;
   var btns = document.querySelectorAll('#etc-view-lote .btn-row .btn');
   btns.forEach(function(b){ b.disabled = true; });
   if (_etcModoImprimirTudo) {
@@ -5472,7 +5679,7 @@ function imprimirProximoDaFila() {
   }
   var produto = _loteAtualFila[0];
   var erroReal = false;
-  imprimirEtiquetaBluetooth(produto).then(function() {
+  PrinterManager.printLabel(produto).then(function() {
     return db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_log').add({
       codigoBarras: produto.codigoBarras,
       nomeProduto: produto.nome,
@@ -5509,8 +5716,8 @@ function imprimirProximoDaFila() {
     showToast('❌ Erro ao imprimir: ' + e.message + ' (fila mantida, tente de novo)');
   }).then(function() {
     // Roda sempre (sucesso ou erro tratado acima) — equivalente a um "finally"
-    // nesta cadeia baseada em .then()/.catch() sem async/await.
-    _etcImprimindo = false;
+    // nesta cadeia baseada em .then()/.catch() sem async/await. _etcImprimindo
+    // já foi zerado por PrinterManager.printLabel() antes deste .then rodar.
     if (erroReal) {
       // Erro real de impressão: para o loop (se houver) e reabilita os
       // botões — como _avancarFilaLoteAposImpressao() não rodou, a fila
@@ -5598,9 +5805,43 @@ function buscarProdutoConsulta(codigo) {
           '<div>Estoque: ' + (mock ? (mock.estoque + ' un.') : '—') + '</div>' +
           '<div>Preço anterior: ' + (mock && mock.precoAnterior ? ('R$ ' + mock.precoAnterior.toFixed(2)) : '—') + '</div>' +
         '</div>' +
+        '<div style="display:flex;align-items:center;gap:8px;padding-top:10px;margin-top:10px;border-top:1px solid var(--gray2);font-size:12px;color:var(--t2)">' +
+          '🖨 ' + _escHtml(PrinterManager.getStatusDisplay().nome) +
+          '<span class="etc-pill ' + PrinterManager.getStatusDisplay().pillCls + '" style="margin-left:auto">' + PrinterManager.getStatusDisplay().emoji + ' ' + PrinterManager.getStatusDisplay().texto + '</span>' +
+        '</div>' +
+        '<button class="btn btn-p" style="width:100%;margin-top:10px" ' + (PrinterManager.podeTentarImprimir() ? '' : 'disabled title="Conecte a impressora primeiro"') + ' onclick="_etcImprimirConsulta(' + _escHtml(JSON.stringify(produto)) + ')">🖨 Imprimir Etiqueta</button>' +
       '</div>';
   }).catch(function(e) {
     preview.innerHTML = '<div class="empty">' + _escHtml(e.message) + '</div>';
+  });
+}
+
+// Imprime 1 etiqueta a partir da Consulta de Produto (funcionalidade nova,
+// item 12 da spec do Tiago 2026-08-21 — antes a Consulta era só
+// visualização). Mesmo PrinterManager que Avulsa/Lote, sem implementação
+// Bluetooth própria.
+function _etcImprimirConsulta(produto) {
+  var btn = document.querySelector('#etc-consulta-preview .btn-p');
+  if (btn) btn.disabled = true;
+  PrinterManager.printLabel(produto).then(function() {
+    return db.collection('clientes').doc(S.clienteConfig.id).collection('etiquetas_log').add({
+      codigoBarras: produto.codigoBarras,
+      nomeProduto: produto.nome,
+      precoImpresso: produto.preco,
+      origem: 'pontual',
+      loteId: null,
+      operadorId: S.currentUser ? S.currentUser.id : null,
+      operadorNome: S.currentUser ? S.currentUser.nome : '-',
+      timestamp: firebase.firestore.FieldValue.serverTimestamp()
+    }).catch(function(e) {
+      showToast('⚠️ Etiqueta impressa, mas houve erro ao registrar o log: ' + e.message);
+    });
+  }).then(function() {
+    showToast('✓ Etiqueta enviada para ' + (PrinterManager.getDeviceName() || 'a impressora'));
+    if (btn) btn.disabled = false;
+  }).catch(function(e) {
+    showToast('❌ Erro ao imprimir: ' + e.message);
+    if (btn) btn.disabled = false;
   });
 }
 
