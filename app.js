@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '351';
+var BUILD = '352';
 var ETIQUETAS_API_URL = 'https://hhk0a8gt2cn.sn.mynetname.net/etiquetas-api';
 (function() {
   var vEl = document.getElementById('sb-versao');
@@ -95,6 +95,257 @@ db.enablePersistence({synchronizeTabs: true}).catch(function(err){
     };
   } catch(e) {
     setTimeout(function(){ _mostrarAvisoAnonimo('IndexedDB não suportado'); }, 500);
+  }
+})();
+
+// ── Check-in de promotor como convidado (QR das lojas) ─────────────────────
+// Roda numa instância Firebase SECUNDÁRIA (mesmo padrão de _getSecondaryAuth,
+// usado em migrarFirebaseAuth) pra nunca interferir com uma sessão real já
+// logada no mesmo navegador/aba (ex.: tablet da loja com admin logado).
+//
+// IMPORTANTE: toda leitura/escrita de `promotor_visitas` usa o Firestore da
+// app SECUNDÁRIA (guestDb = firebase.app('promotorCheckin').firestore()),
+// nunca o `db` global (Firestore da app PRIMÁRIA/default). Uma instância de
+// Firestore só carrega as credenciais da app Firebase da qual ela foi obtida
+// — `db` (obtido de firebase.firestore(), sem app explícita) sempre usa o
+// auth da app default (o mesmo `firebase.auth()` usado por finalizarLogin/
+// onAuthStateChanged em todo o resto do arquivo), mesmo que o guest tenha
+// logado anonimamente na app secundária. Se usássemos `db` aqui: (a) numa
+// aba sem ninguém logado, request.auth seria null nas regras do Firestore e
+// toda leitura/escrita de promotor_visitas seria negada; (b) numa aba com um
+// admin real já logado, a escrita sairia autenticada como o UID do admin,
+// não o guestUid do convidado — violando `sessionUid == request.auth.uid`
+// das regras (firestore.rules) e falhando também, só que de um jeito muito
+// mais perigoso de se confundir com corrupção de sessão. Por isso o guestDb
+// dedicado: garante que toda operação em promotor_visitas é sempre avaliada
+// contra a identidade anônima do convidado, isolada do que estiver rolando
+// na app primária. Leitura de `clientes/{id}` (nome da loja) e de
+// `fornecedores` continua no `db` primário — são leituras públicas
+// (fornecedores: allow read: if true) e não dependem de identidade.
+(function() {
+  var params = new URLSearchParams(location.search);
+  if (params.get('checkin') !== '1') return;
+
+  var CLIENTE_ID = params.get('c') || '';
+  var LOJA_ID = params.get('l') || '';
+  var overlay = document.getElementById('checkin-guest-overlay');
+  overlay.style.cssText = 'display:flex;position:fixed;inset:0;z-index:999999;background:#F5F6F8;align-items:center;justify-content:center;padding:20px;font-family:\'Segoe UI\',sans-serif';
+  overlay.innerHTML = '<div class="card" id="cg-card" style="background:#fff;border-radius:16px;padding:28px 24px;max-width:400px;width:100%;box-shadow:0 4px 20px rgba(0,0,0,.08)">'
+    + '<div id="cg-titulo" style="font-size:20px;font-weight:800;margin-bottom:4px">Carregando...</div>'
+    + '<div id="cg-sub" style="font-size:13px;color:#6b7280;margin-bottom:20px"></div>'
+    + '<div id="cg-erro" style="display:none;font-size:13px;padding:12px;border-radius:10px;margin-bottom:16px;background:#fee2e2;color:#991b1b"></div>'
+    // #cg-body é sempre substituído (=), nunca concatenado (+=) — cg-titulo/
+    // cg-sub/cg-erro ficam fora dele pra sobreviver às trocas de tela
+    // (achado do reviewer da Task 9: += duplicava o formulário e travava o
+    // botão a cada re-render).
+    + '<div id="cg-body"></div>'
+    + '</div>';
+
+  function cgErro(msg) {
+    var el = document.getElementById('cg-erro');
+    el.textContent = msg;
+    el.style.display = 'block';
+  }
+
+  function getGuestAuth() {
+    try { return firebase.app('promotorCheckin').auth(); }
+    catch(e) { return firebase.initializeApp(_fbAuthConfig, 'promotorCheckin').auth(); }
+  }
+
+  if (!CLIENTE_ID || !LOJA_ID) { cgErro('Link inválido — faltam parâmetros na URL.'); return; }
+
+  var guestAuth = null;
+  // Firestore obtido da MESMA app secundária do guestAuth — é isso que faz
+  // as regras (`request.auth`) enxergarem o guestUid, e não o auth da app
+  // primária. Ver comentário grande acima do IIFE.
+  var guestDb = null;
+  var guestUid = null;
+  var fornecedoresDaLoja = [];
+  var visitaAbertaId = null;
+  var visitaAgendadaId = null;
+
+  // `_fbAuthConfig` só é atribuído mais abaixo neste mesmo arquivo (é tudo
+  // um único script, executado de cima pra baixo, de forma síncrona) — essa
+  // IIFE roda logo no topo do arquivo, antes daquele ponto. Por isso adiamos
+  // a inicialização da app secundária (getGuestAuth) pro próximo tick via
+  // setTimeout(0): garante que o script inteiro já terminou de rodar e
+  // `_fbAuthConfig` já foi atribuído antes de usá-lo. Sem isso,
+  // firebase.initializeApp(undefined, 'promotorCheckin') falharia.
+  setTimeout(function() {
+    try {
+      guestAuth = getGuestAuth();
+      guestDb = guestAuth.app.firestore();
+    } catch (e) {
+      cgErro('Erro ao iniciar sessão de convidado: ' + e.message);
+      return;
+    }
+
+    guestAuth.signInAnonymously().then(function(cred) {
+      guestUid = cred.user.uid;
+      // guestDb (não db, o primário) — clientes/fornecedores exigem
+      // request.auth != null desde a revisão de segurança da Task 9; a
+      // sessão anônima da app secundária já cobre isso.
+      return guestDb.collection('clientes').doc(CLIENTE_ID).get();
+    }).then(function(doc) {
+      var nome = doc.exists ? (doc.data().nome || CLIENTE_ID) : CLIENTE_ID;
+      document.getElementById('cg-titulo').textContent = nome;
+      document.getElementById('cg-sub').textContent = 'Loja: ' + LOJA_ID;
+      return guestDb.collection('clientes').doc(CLIENTE_ID).collection('fornecedores')
+        .where('lojas', 'array-contains', LOJA_ID).where('ativo', '==', true).get();
+    }).then(function(snap) {
+      fornecedoresDaLoja = snap.docs.map(function(d) { return Object.assign({id: d.id}, d.data()); });
+      return verificarVisita();
+    }).catch(function(e) { cgErro('Erro ao iniciar: ' + e.message); });
+  }, 0);
+
+  function verificarVisita() {
+    var col = guestDb.collection('clientes').doc(CLIENTE_ID).collection('promotor_visitas');
+    return col.where('sessionUid', '==', guestUid).where('checkOutEm', '==', null).limit(1).get()
+      .then(function(snap) {
+        if (!snap.empty) {
+          visitaAbertaId = snap.docs[0].id;
+          renderCheckout(snap.docs[0].data());
+          return;
+        }
+        // A busca por visita agendada só roda depois que o promotor escolhe
+        // o fornecedor no formulário (em fazerCheckin) — achado do reviewer
+        // da Task 9: buscar aqui, sem filtrar por fornecedor, pegava a
+        // primeira visita agendada da loja no dia, não necessariamente a
+        // do fornecedor que o promotor realmente representa.
+        renderCheckin();
+      });
+  }
+
+  function renderCheckin() {
+    var body = document.getElementById('cg-body');
+    var opcoes = fornecedoresDaLoja.map(function(f) { return '<option value="' + f.id + '">' + _escHtml(f.nome) + '</option>'; }).join('');
+    if (!opcoes) {
+      body.innerHTML = '<div style="font-size:13px;padding:12px;border-radius:10px;background:#fee2e2;color:#991b1b">Nenhum fornecedor cadastrado pra essa loja ainda. Fale com o administrador.</div>';
+      return;
+    }
+    body.innerHTML =
+      '<label style="display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:6px;text-transform:uppercase">Fornecedor</label>'
+      + '<select id="cg-fornecedor" style="width:100%;padding:12px;border:1px solid #d1d5db;border-radius:10px;font-size:15px;margin-bottom:16px"><option value="">Selecione...</option>' + opcoes + '</select>'
+      + '<label style="display:block;font-size:12px;font-weight:700;color:#374151;margin-bottom:6px;text-transform:uppercase">Seu nome</label>'
+      + '<input id="cg-nome" placeholder="Nome completo" style="width:100%;padding:12px;border:1px solid #d1d5db;border-radius:10px;font-size:15px;margin-bottom:16px">'
+      + '<button id="cg-btn" style="width:100%;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;background:#FFC600;color:#111">Registrar entrada</button>';
+    document.getElementById('cg-btn').onclick = fazerCheckin;
+  }
+
+  function fazerCheckin() {
+    var fornecedorId = document.getElementById('cg-fornecedor').value;
+    var nome = document.getElementById('cg-nome').value.trim();
+    if (!fornecedorId) { cgErro('Selecione o fornecedor.'); return; }
+    if (!nome) { cgErro('Informe seu nome.'); return; }
+    var fornecedor = fornecedoresDaLoja.filter(function(f) { return f.id === fornecedorId; })[0];
+    var btn = document.getElementById('cg-btn');
+    btn.disabled = true; btn.textContent = 'Registrando...';
+    var col = guestDb.collection('clientes').doc(CLIENTE_ID).collection('promotor_visitas');
+
+    function gravar(geo) {
+      var dados = {
+        checkInEm: firebase.firestore.FieldValue.serverTimestamp(),
+        checkInGeo: geo,
+        sessionUid: guestUid,
+        status: 'na_loja'
+      };
+      var op;
+      if (visitaAgendadaId) {
+        op = col.doc(visitaAgendadaId).update(dados);
+      } else {
+        op = col.add(Object.assign({
+          fornecedorId: fornecedorId,
+          fornecedorNome: fornecedor.nome,
+          lojaId: LOJA_ID,
+          lojaNome: LOJA_ID,
+          promotorNome: nome,
+          promotorTelefone: null,
+          dataAgendada: getLocalDate(),
+          horaAgendada: null,
+          checkOutEm: null,
+          checkOutGeo: null
+        }, dados));
+      }
+      op.then(function(ref) {
+        visitaAbertaId = visitaAgendadaId || (ref && ref.id);
+        verificarVisita();
+      }).catch(function(e) {
+        btn.disabled = false; btn.textContent = 'Registrar entrada';
+        cgErro('Erro ao registrar: ' + e.message);
+      });
+    }
+
+    function prosseguir() {
+      if (!navigator.geolocation) { gravar(null); return; }
+      navigator.geolocation.getCurrentPosition(
+        function(pos) { gravar({lat: pos.coords.latitude, lng: pos.coords.longitude}); },
+        function() { gravar(null); },
+        {timeout: 5000}
+      );
+    }
+
+    // Só agora, com o fornecedor escolhido, busca uma visita agendada pra
+    // ESSE fornecedor nessa loja hoje — evita "assumir" a visita agendada
+    // de outro fornecedor (achado do reviewer da Task 9).
+    var hoje = getLocalDate();
+    col.where('lojaId', '==', LOJA_ID).where('fornecedorId', '==', fornecedorId)
+      .where('status', '==', 'agendada').where('dataAgendada', '==', hoje).limit(1).get()
+      .then(function(snapAgendadas) {
+        visitaAgendadaId = (!snapAgendadas.empty) ? snapAgendadas.docs[0].id : null;
+        prosseguir();
+      }).catch(function(e) {
+        btn.disabled = false; btn.textContent = 'Registrar entrada';
+        cgErro('Erro ao verificar agendamento: ' + e.message);
+      });
+  }
+
+  function renderCheckout(visita) {
+    var body = document.getElementById('cg-body');
+    var hora = visita.checkInEm && visita.checkInEm.toDate ? visita.checkInEm.toDate().toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'}) : '';
+    body.innerHTML =
+      '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:12px;padding:16px;margin-bottom:16px"><b style="display:block;font-size:16px;margin-bottom:4px">Você está em: ' + _escHtml(visita.lojaNome) + '</b>Fornecedor: ' + _escHtml(visita.fornecedorNome) + '<br>Entrada às ' + hora + '</div>'
+      + '<button id="cg-btn-out" style="width:100%;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;background:#FFC600;color:#111">Registrar saída</button>'
+      // Celular/tablet compartilhado entre promotores: o segundo a escanear
+      // herda a sessão anônima (e a visita em aberto) do primeiro. Esse link
+      // troca de sessão anônima e volta pro formulário de check-in em vez de
+      // fechar a visita de outra pessoa por engano (achado da revisão final).
+      + '<div id="cg-nao-sou-eu" style="text-align:center;margin-top:12px;font-size:12px;color:#6b7280;text-decoration:underline;cursor:pointer">Esse não sou eu — trocar de promotor</div>';
+    document.getElementById('cg-btn-out').onclick = fazerCheckout;
+    document.getElementById('cg-nao-sou-eu').onclick = trocarPromotor;
+  }
+
+  function trocarPromotor() {
+    guestAuth.signOut().then(function() {
+      return guestAuth.signInAnonymously();
+    }).then(function(cred) {
+      guestUid = cred.user.uid;
+      visitaAbertaId = null;
+      visitaAgendadaId = null;
+      verificarVisita();
+    }).catch(function(e) { cgErro('Erro ao trocar de promotor: ' + e.message); });
+  }
+
+  function fazerCheckout() {
+    var btn = document.getElementById('cg-btn-out');
+    btn.disabled = true; btn.textContent = 'Registrando...';
+    function gravar(geo) {
+      guestDb.collection('clientes').doc(CLIENTE_ID).collection('promotor_visitas').doc(visitaAbertaId).update({
+        checkOutEm: firebase.firestore.FieldValue.serverTimestamp(),
+        checkOutGeo: geo,
+        status: 'realizada'
+      }).then(function() {
+        document.getElementById('cg-card').innerHTML = '<div style="font-size:20px;font-weight:800;margin-bottom:4px">✅ Saída registrada</div><div style="font-size:13px;color:#6b7280">Obrigado! Você já pode fechar essa página.</div>';
+      }).catch(function(e) {
+        btn.disabled = false; btn.textContent = 'Registrar saída';
+        cgErro('Erro ao registrar: ' + e.message);
+      });
+    }
+    if (!navigator.geolocation) { gravar(null); return; }
+    navigator.geolocation.getCurrentPosition(
+      function(pos) { gravar({lat: pos.coords.latitude, lng: pos.coords.longitude}); },
+      function() { gravar(null); },
+      {timeout: 5000}
+    );
   }
 })();
 
@@ -951,7 +1202,19 @@ var S = {
 };
 
 // ── Feature flags por cliente ─────────────────────────────────────────────
+// Módulos "opt-in": nascem TRAVADOS por padrão (precisa contratar
+// explicitamente), diferente do padrão histórico dos outros módulos (chave
+// ausente = ativo). Só entra aqui um módulo novo que já tem escrita
+// alcançável por usuário não-autenticado (ex: check-in de promotor
+// convidado) — achado da revisão final de branch do Promotores v2: sem
+// isso, todo cliente existente (sem `modulos.promotores` gravado ainda)
+// nascia com o card VIVO em vez de travado.
+var MODULOS_OPT_IN = {promotores: true};
+
 function _moduloAtivo(nome) {
+  if (MODULOS_OPT_IN[nome]) {
+    return !!(S.clienteConfig && S.clienteConfig.modulos && S.clienteConfig.modulos[nome] === true);
+  }
   if (!S.clienteConfig) return true;
   var m = S.clienteConfig.modulos;
   if (!m) return true;
@@ -996,7 +1259,9 @@ var CAPA_MODULOS = [
     },
     page: function(){ return S.role === 'admin' ? 'inv' : 'inv-coleta'; },
     icone:'<path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2"/><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 12h6M9 16h4"/>' },
-  { id:'promotores', label:'Promotores', desenvolvido:false,
+  { id:'promotores', label:'Promotores', desenvolvido:true, moduloChave:'promotores',
+    roleOk: function(){ return S.role==='admin' || S.role==='supervisor'; },
+    page: function(){ return 'promotores'; },
     icone:'<path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/>' },
   { id:'pesquisa', label:'Pesquisa Concorrentes', desenvolvido:false,
     icone:'<circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>' },
@@ -1700,7 +1965,7 @@ function setupRole() {
   show('nav-capa', true);
   var mostrarEmBreve = false; // vitrine "Em Breve" desativada a pedido do Tiago (2026-08-18); reativar trocando pra: isAdmin || r==='gerencia' || isSup
   show('sb-embreve-sec', mostrarEmBreve);
-  show('nav-embreve-promotores', mostrarEmBreve);
+  show('nav-promotores', (isAdmin || isSup) && _moduloAtivo('promotores'));
   show('nav-embreve-pesquisa', mostrarEmBreve);
   show('nav-embreve-recebimento', mostrarEmBreve);
   show('nav-embreve-validade', mostrarEmBreve);
@@ -1839,6 +2104,9 @@ function nav(page, el) {
       gerarPillsMesCentral();
       switchCentralTab('checklist', document.querySelector('#central-tabs .tab'));
     });
+  }
+  if (page === 'promotores') {
+    renderPromotoresPainel();
   }
   if (page==='checklist') {
     // Recarrega planos do Firebase toda vez que entra no Checklist — sem isso,
@@ -4257,46 +4525,473 @@ function switchCentralTab(tab, btn) {
 }
 
 // ── Promotores (fornecedores + visitas) ──
-function switchPromotoresTab(tab, btn) {
-  document.getElementById('promotores-tab-fornecedores').style.display = tab === 'fornecedores' ? 'block' : 'none';
-  document.getElementById('promotores-tab-visitas').style.display = tab === 'visitas' ? 'block' : 'none';
-  document.querySelectorAll('#promotores-tabs .tab').forEach(function(t){t.classList.remove('on');});
-  if (btn) btn.classList.add('on');
-  if (tab === 'visitas') renderVisitasPromotor();
-}
-
 function fornecedoresCol() {
   return db.collection('clientes').doc(S.clienteConfig.id).collection('fornecedores');
 }
 
-function renderFornecedores() {
-  var wrap = document.getElementById('fornecedores-lista');
-  wrap.innerHTML = '<div class="empty">Carregando...</div>';
-  fornecedoresCol().get().then(function(snap) {
-    if (snap.empty) { wrap.innerHTML = '<div class="empty">Nenhum fornecedor cadastrado ainda.</div>'; return; }
-    wrap.innerHTML = snap.docs.map(function(d) {
-      var f = d.data();
-      return '<div class="card" style="display:flex;align-items:center;justify-content:space-between;padding:14px;margin-bottom:8px">'
-        + '<div><strong>' + f.nome + '</strong><div style="font-size:12px;color:var(--t3)">Lojas: ' + (f.lojas||[]).join(', ') + '</div></div>'
-        + '<div style="display:flex;gap:6px">'
-        + '<button class="btn btn-s btn-sm" onclick="abrirQrFornecedor(\'' + (f.lojas && f.lojas[0] || '') + '\')">QR</button>'
-        + '<button class="btn btn-s btn-sm" onclick="abrirModalFornecedor(\'' + d.id + '\')">Editar</button>'
-        + '<button class="btn btn-d btn-sm" onclick="excluirFornecedor(\'' + d.id + '\')">Excluir</button>'
-        + '</div></div>';
-    }).join('');
+function visitasCol() {
+  return db.collection('clientes').doc(S.clienteConfig.id).collection('promotor_visitas');
+}
+
+var STATUS_VISITA = {
+  agendada:       {label: 'Agendada',          cls: 'st-warn'},
+  na_loja:        {label: 'Na Loja',            cls: 'st-ok'},
+  realizada:      {label: 'Realizada',          cls: 'st-info'},
+  nao_compareceu: {label: 'Não Compareceu',     cls: 'st-err'},
+  fim_de_semana:  {label: 'Fim de Semana',      cls: 'st-info'}
+};
+
+function labelStatusVisita(status) {
+  var s = STATUS_VISITA[status];
+  return s ? s.label : status;
+}
+
+// Compara horaAgendada (HH:MM) com o horário real de checkInEm.
+// >15min de atraso = 'atrasado', <=-10min (chegou adiantado) = 'antecipado', senão 'pontual'.
+// Sem horaAgendada ou sem checkInEm ainda: retorna null (sem badge).
+function calcPontualidade(visita) {
+  if (!visita.horaAgendada || !visita.checkInEm) return null;
+  var checkInDate = visita.checkInEm.toDate ? visita.checkInEm.toDate() : new Date(visita.checkInEm);
+  var partes = visita.horaAgendada.split(':');
+  var agendado = new Date(checkInDate);
+  agendado.setHours(parseInt(partes[0], 10), parseInt(partes[1], 10), 0, 0);
+  var diffMin = (checkInDate - agendado) / 60000;
+  if (diffMin > 15) return 'atrasado';
+  if (diffMin <= -10) return 'antecipado';
+  return 'pontual';
+}
+
+// Sem lista canônica de lojas no FC360 (cada módulo gerencia lojas por
+// texto livre) — deriva o conjunto de lojas a partir dos fornecedores
+// cadastrados neste módulo.
+function getLojasUnicas(fornecedores) {
+  var set = {};
+  (fornecedores || []).forEach(function(f) {
+    (f.lojas || []).forEach(function(l) { set[l] = true; });
   });
+  return Object.keys(set).sort();
+}
+
+// ── Painel Promotores ──
+var S_PROM = {visitas: [], fornecedores: [], filtro: 'todos', busca: ''};
+
+function renderPromotoresPainel() {
+  document.getElementById('promotores-agendamento-btn').innerHTML =
+    '<button class="btn btn-p btn-sm" onclick="abrirModalAgendamento()">+ Novo Agendamento</button>';
+  Promise.all([
+    visitasCol().get(),
+    fornecedoresCol().get()
+  ]).then(function(results) {
+    S_PROM.visitas = results[0].docs.map(function(d) { return Object.assign({id: d.id}, d.data()); });
+    S_PROM.fornecedores = results[1].docs.map(function(d) { return Object.assign({id: d.id}, d.data()); });
+    renderKpisPromotores();
+    renderTabelaVisitas();
+    renderFornecedoresLista();
+    if (typeof renderQrGridLojas === 'function') renderQrGridLojas();
+    if (typeof renderRankingsPromotores === 'function') renderRankingsPromotores();
+  }).catch(function(e) {
+    document.getElementById('promotores-tabela').innerHTML = '<div class="empty">Erro ao carregar: ' + e.message + '</div>';
+  });
+}
+
+function renderFornecedoresLista() {
+  var wrap = document.getElementById('promotores-fornecedores-lista');
+  if (!S_PROM.fornecedores.length) { wrap.innerHTML = '<div class="empty">Nenhum fornecedor cadastrado ainda.</div>'; return; }
+  wrap.innerHTML = S_PROM.fornecedores.map(function(f) {
+    return '<div class="card" style="display:flex;align-items:center;justify-content:space-between;padding:14px;margin-bottom:8px">'
+      + '<div><strong>' + _escHtml(f.nome) + '</strong><div style="font-size:12px;color:var(--t3)">Lojas: ' + _escHtml((f.lojas||[]).join(', ')) + (f.telefone ? ' · ' + _escHtml(f.telefone) : '') + '</div></div>'
+      + '<div style="display:flex;gap:6px">'
+      + '<button class="btn btn-s btn-sm" onclick="abrirDrawerFornecedor(\'' + f.id + '\')">Ver</button>'
+      + '<button class="btn btn-s btn-sm" onclick="abrirModalFornecedor(\'' + f.id + '\')">Editar</button>'
+      + '<button class="btn btn-d btn-sm" onclick="excluirFornecedor(\'' + f.id + '\')">Excluir</button>'
+      + '</div></div>';
+  }).join('');
+}
+
+function excluirFornecedor(id) {
+  if (!confirm('Excluir este fornecedor?')) return;
+  fornecedoresCol().doc(id).delete().then(renderPromotoresPainel);
+}
+
+function renderKpisPromotores() {
+  var hoje = getLocalDate();
+  var visitasHoje = S_PROM.visitas.filter(function(v) { return v.dataAgendada === hoje; });
+  var previstas = visitasHoje.length;
+  var realizadas = visitasHoje.filter(function(v) { return v.status === 'realizada'; }).length;
+  var naLoja = visitasHoje.filter(function(v) { return v.status === 'na_loja'; }).length;
+  var naoCompareceram = visitasHoje.filter(function(v) { return v.status === 'nao_compareceu'; }).length;
+  var pct = previstas ? Math.round((realizadas / previstas) * 100) : 0;
+
+  document.getElementById('promotores-kpis').innerHTML =
+    '<style>#promotores-kpis .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}'
+    + '#promotores-kpis .kpi{background:#f8f9fa;border-radius:8px;padding:12px 14px;border-left:4px solid #FFC600}'
+    + '#promotores-kpis .k-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.5px;color:#888;margin-bottom:4px}'
+    + '#promotores-kpis .k-val{font-size:22px;font-weight:800}</style>'
+    + '<div class="kpis">'
+    + '<div class="kpi"><div class="k-lbl">Visitas Previstas Hoje</div><div class="k-val">' + previstas + '</div></div>'
+    + '<div class="kpi"><div class="k-lbl">Check-ins Realizados</div><div class="k-val">' + realizadas + '</div></div>'
+    + '<div class="kpi"><div class="k-lbl">Em Loja Agora</div><div class="k-val">' + naLoja + '</div></div>'
+    + '<div class="kpi" style="border-left-color:' + (naoCompareceram > 0 ? '#e74c3c' : '#FFC600') + '"><div class="k-lbl">Não Compareceram</div><div class="k-val" style="color:' + (naoCompareceram > 0 ? '#e74c3c' : 'inherit') + '">' + naoCompareceram + '</div></div>'
+    + '</div>';
+
+  document.getElementById('promotores-cumprimento').innerHTML =
+    '<div style="font-size:12px;color:var(--t3);margin-bottom:4px">Cumprimento da Agenda (hoje): ' + pct + '%</div>'
+    + '<div style="background:var(--gray);border-radius:8px;height:8px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:' + (pct >= 80 ? '#2d9e62' : pct >= 50 ? '#e67e22' : '#e74c3c') + '"></div></div>';
+}
+
+function aplicarFiltroPromotores(filtro, btn) {
+  S_PROM.filtro = filtro;
+  document.querySelectorAll('#promotores-filtros .tab').forEach(function(t) { t.classList.remove('on'); });
+  if (btn) btn.classList.add('on');
+  renderTabelaVisitas();
+}
+
+function buscarPromotores(valor) {
+  S_PROM.busca = (valor || '').toLowerCase().trim();
+  renderTabelaVisitas();
+}
+
+function _visitasFiltradas() {
+  var hoje = getLocalDate();
+  var em7dias = new Date(); em7dias.setDate(em7dias.getDate() + 7);
+  // Data local, não toISOString() (UTC) — mesma classe de bug corrigida na
+  // agenda semanal (Task 6): dataAgendada é sempre local, comparar com uma
+  // string UTC desalinhava o intervalo perto do fim do dia no fuso do Brasil.
+  var em7diasStr = em7dias.getFullYear() + '-' + String(em7dias.getMonth() + 1).padStart(2, '0') + '-' + String(em7dias.getDate()).padStart(2, '0');
+
+  return S_PROM.visitas.filter(function(v) {
+    if (S_PROM.filtro === 'hoje' && v.dataAgendada !== hoje) return false;
+    if (S_PROM.filtro === 'proximos7' && !(v.dataAgendada >= hoje && v.dataAgendada <= em7diasStr)) return false;
+    if (['agendada','na_loja','realizada','nao_compareceu','fim_de_semana'].indexOf(S_PROM.filtro) >= 0 && v.status !== S_PROM.filtro) return false;
+    if (S_PROM.busca) {
+      var alvo = ((v.fornecedorNome||'') + ' ' + (v.promotorNome||'') + ' ' + (v.lojaNome||'')).toLowerCase();
+      if (alvo.indexOf(S_PROM.busca) === -1) return false;
+    }
+    return true;
+  }).sort(function(a, b) { return (b.dataAgendada||'') < (a.dataAgendada||'') ? -1 : 1; });
+}
+
+function renderTabelaVisitas() {
+  var wrap = document.getElementById('promotores-tabela');
+  var visitas = _visitasFiltradas();
+  if (!visitas.length) { wrap.innerHTML = '<div class="empty">Nenhuma visita encontrada.</div>'; return; }
+
+  var pontualidadeLabel = {antecipado: 'Antecipado', pontual: 'Pontual', atrasado: 'Atrasado'};
+
+  wrap.innerHTML = '<table class="tbl"><thead><tr><th>Data</th><th>Fornecedor</th><th>Promotor</th><th>Loja</th><th>Programado</th><th>Entrada</th><th>Saída</th><th>Status</th><th></th></tr></thead><tbody>'
+    + visitas.map(function(v) {
+      var st = STATUS_VISITA[v.status] || {label: v.status, cls: 'st-info'};
+      var pont = calcPontualidade(v);
+      var entrada = v.checkInEm ? (v.checkInEm.toDate ? v.checkInEm.toDate() : new Date(v.checkInEm)).toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'}) : '-';
+      var saida = v.checkOutEm ? (v.checkOutEm.toDate ? v.checkOutEm.toDate() : new Date(v.checkOutEm)).toLocaleTimeString('pt-BR', {hour:'2-digit',minute:'2-digit'}) : (v.status === 'na_loja' ? '<span class="st st-warn">Em aberto</span>' : '-');
+      // Fechar manualmente: cobre o caso de promotor que trocou de
+      // celular/navegador no meio da visita e ficou com o check-out
+      // travado (limitação aceita do check-in por sessão anônima, ver spec
+      // seção 8) — usa a regra Update #3 do Firestore (admin/supervisor
+      // não-anônimo pode editar qualquer visita).
+      var acao = v.status === 'na_loja' ? '<button class="btn btn-s btn-sm" onclick="fecharVisitaManualmente(\'' + v.id + '\')">Fechar</button>' : '';
+      return '<tr><td>' + (v.dataAgendada || '-') + '</td><td>' + _escHtml(v.fornecedorNome||'-') + '</td><td>' + _escHtml(v.promotorNome||'-') + '</td><td>' + _escHtml(v.lojaNome||'-') + '</td>'
+        + '<td>' + (v.horaAgendada || '-') + '</td>'
+        + '<td>' + entrada + (pont ? ' <span class="st ' + (pont==='atrasado'?'st-err':pont==='antecipado'?'st-info':'st-ok') + '">' + pontualidadeLabel[pont] + '</span>' : '') + '</td>'
+        + '<td>' + saida + '</td>'
+        + '<td><span class="st ' + st.cls + '">' + st.label + '</span></td>'
+        + '<td>' + acao + '</td></tr>';
+    }).join('')
+    + '</tbody></table>';
+}
+
+function fecharVisitaManualmente(id) {
+  if (!confirm('Fechar esta visita manualmente? Use quando o promotor esqueceu de registrar a saída ou trocou de celular no meio da visita.')) return;
+  visitasCol().doc(id).update({
+    checkOutEm: firebase.firestore.FieldValue.serverTimestamp(),
+    status: 'realizada'
+  }).then(function() {
+    showToast('Visita fechada.');
+    renderPromotoresPainel();
+  }).catch(function(e) { showToast('Erro ao fechar: ' + e.message); });
+}
+
+function abrirModalAgendamento() {
+  var sel = document.getElementById('ag-fornecedor');
+  sel.innerHTML = '<option value="">Selecione...</option>' + S_PROM.fornecedores.map(function(f) {
+    return '<option value="' + f.id + '" data-nome="' + _escHtml(f.nome) + '">' + _escHtml(f.nome) + '</option>';
+  }).join('');
+  document.getElementById('ag-promotor-nome').value = '';
+  document.getElementById('ag-promotor-telefone').value = '';
+  document.getElementById('ag-loja').value = '';
+  document.getElementById('ag-data-inicial').value = getLocalDate();
+  document.getElementById('ag-hora').value = '';
+  document.getElementById('ag-periodicidade').value = '';
+  document.getElementById('ag-data-final').value = '';
+  document.querySelectorAll('#ag-dias .dia-btn').forEach(function(b) { b.classList.remove('btn-p'); b.classList.add('btn-s'); });
+  document.getElementById('modal-agendamento').style.display = 'flex';
+}
+
+function toggleDiaAgendamento(btn) {
+  btn.classList.toggle('btn-p');
+  btn.classList.toggle('btn-s');
+}
+
+// Gera as datas de ocorrência entre dataInicial e dataFinal conforme a
+// periodicidade. Sem periodicidade = uma ocorrência só (avulso).
+// Teto de 60 ocorrências pra nunca gerar uma escrita em massa por engano.
+function _gerarDatasAgendamento(dataInicial, dataFinal, periodicidade, diasSemana) {
+  if (!periodicidade) return [dataInicial];
+  var datas = [];
+  var inicio = new Date(dataInicial + 'T00:00:00');
+  var cursor = new Date(dataInicial + 'T00:00:00');
+  var fim = new Date((dataFinal || dataInicial) + 'T00:00:00');
+  while (cursor <= fim && datas.length < 60) {
+    var diaSemana = cursor.getDay();
+    var passaFiltroDia = periodicidade === 'diaria' || periodicidade === 'mensal' || !diasSemana.length || diasSemana.indexOf(diaSemana) >= 0;
+    if (periodicidade === 'quinzenal') {
+      // Semana ancorada na própria dataInicial (não no calendário Unix) —
+      // achado do reviewer da Task 5: ancorar no epoch fazia o primeiro
+      // bloco sair mais curto que 7 dias dependendo do dia da semana
+      // escolhido, e a próxima ocorrência cair 7 ou 21 dias depois em vez
+      // de sempre 14.
+      var diasDesdeInicio = Math.round((cursor.getTime() - inicio.getTime()) / 86400000);
+      var semanaIndex = Math.floor(diasDesdeInicio / 7);
+      passaFiltroDia = passaFiltroDia && (semanaIndex % 2 === 0);
+    }
+    if (periodicidade === 'mensal') {
+      passaFiltroDia = cursor.getDate() === new Date(dataInicial + 'T00:00:00').getDate();
+    }
+    // Data local, não toISOString() (UTC) — mesma classe de bug já corrigida
+    // na agenda semanal e no filtro "próximos 7 dias" (achado da revisão
+    // final de branch): aqui é pior porque é caminho de ESCRITA, não só
+    // exibição — gravaria dataAgendada errada perto da virada do dia.
+    if (passaFiltroDia) datas.push(cursor.getFullYear() + '-' + String(cursor.getMonth() + 1).padStart(2, '0') + '-' + String(cursor.getDate()).padStart(2, '0'));
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return datas;
+}
+
+function salvarAgendamento() {
+  var fornecedorSel = document.getElementById('ag-fornecedor');
+  var fornecedorId = fornecedorSel.value;
+  var fornecedorNome = fornecedorSel.options[fornecedorSel.selectedIndex] ? fornecedorSel.options[fornecedorSel.selectedIndex].getAttribute('data-nome') : '';
+  var promotorNome = document.getElementById('ag-promotor-nome').value.trim();
+  var lojaId = document.getElementById('ag-loja').value.trim();
+  var dataInicial = document.getElementById('ag-data-inicial').value;
+  var periodicidade = document.getElementById('ag-periodicidade').value;
+  var dataFinal = document.getElementById('ag-data-final').value;
+
+  if (!fornecedorId || !promotorNome || !lojaId || !dataInicial) { showToast('Preencha fornecedor, promotor, loja e data inicial.'); return; }
+  if (periodicidade && !dataFinal) { showToast('Informe a data final da recorrência.'); return; }
+
+  var diasSemana = Array.prototype.slice.call(document.querySelectorAll('#ag-dias .dia-btn.btn-p'))
+    .map(function(b) { return parseInt(b.getAttribute('data-dia'), 10); });
+  var datas = _gerarDatasAgendamento(dataInicial, dataFinal, periodicidade, diasSemana);
+  if (!datas.length) { showToast('Nenhuma data gerada — confira os dias da semana e o período.'); return; }
+
+  var batch = db.batch();
+  var col = visitasCol();
+  datas.forEach(function(data) {
+    var ref = col.doc();
+    batch.set(ref, {
+      fornecedorId: fornecedorId,
+      fornecedorNome: fornecedorNome,
+      lojaId: lojaId,
+      lojaNome: lojaId,
+      promotorNome: promotorNome,
+      promotorTelefone: document.getElementById('ag-promotor-telefone').value.trim() || null,
+      dataAgendada: data,
+      horaAgendada: document.getElementById('ag-hora').value || null,
+      status: 'agendada',
+      sessionUid: null,
+      checkInEm: null,
+      checkInGeo: null,
+      checkOutEm: null,
+      checkOutGeo: null
+    });
+  });
+  batch.commit().then(function() {
+    document.getElementById('modal-agendamento').style.display = 'none';
+    showToast(datas.length + ' visita(s) agendada(s).');
+    renderPromotoresPainel();
+  }).catch(function(e) { showToast('Erro ao agendar: ' + e.message); });
+}
+
+var _agendaSemanaOffset = 0;
+
+function abrirAgendaSemanal() {
+  _agendaSemanaOffset = 0;
+  document.getElementById('modal-agenda-semanal').style.display = 'flex';
+  renderAgendaSemanal(0, true);
+}
+
+function renderAgendaSemanal(delta, resetar) {
+  _agendaSemanaOffset = resetar ? 0 : _agendaSemanaOffset + delta;
+  var hoje = new Date();
+  var diaSemanaHoje = hoje.getDay();
+  var segundaBase = new Date(hoje);
+  segundaBase.setDate(hoje.getDate() - ((diaSemanaHoje + 6) % 7) + (_agendaSemanaOffset * 7));
+
+  var nomesDia = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+  var hojeStr = getLocalDate();
+  var grid = document.getElementById('agenda-semanal-grid');
+
+  var colunas = [];
+  for (var i = 0; i < 7; i++) {
+    var dia = new Date(segundaBase);
+    dia.setDate(segundaBase.getDate() + i);
+    // Data local (não toISOString, que é UTC e desalinha com getLocalDate()
+    // em fusos negativos como o Brasil — as visitas são gravadas com data
+    // local, então o agrupamento por coluna precisa usar o mesmo formato).
+    var diaStr = dia.getFullYear() + '-' + String(dia.getMonth() + 1).padStart(2, '0') + '-' + String(dia.getDate()).padStart(2, '0');
+    var isHoje = diaStr === hojeStr;
+    var isFimSemana = dia.getDay() === 0 || dia.getDay() === 6;
+    var visitasDoDia = S_PROM.visitas.filter(function(v) { return v.dataAgendada === diaStr; })
+      .sort(function(a, b) { return (a.horaAgendada||'') < (b.horaAgendada||'') ? -1 : 1; });
+
+    var cards = visitasDoDia.map(function(v) {
+      var st = STATUS_VISITA[v.status] || {label: v.status, cls: 'st-info'};
+      return '<div class="card" style="padding:8px;margin-bottom:6px;font-size:11px">'
+        + '<div style="font-weight:700">' + (v.horaAgendada || '--:--') + ' · ' + _escHtml(v.fornecedorNome||'-') + '</div>'
+        + '<div style="color:var(--t3)">' + _escHtml(v.promotorNome||'-') + ' · ' + _escHtml(v.lojaNome||'-') + '</div>'
+        + '<span class="st ' + st.cls + '" style="margin-top:4px;display:inline-block">' + st.label + '</span></div>';
+    }).join('') || '<div style="font-size:11px;color:var(--t3)">Sem visitas</div>';
+
+    colunas.push(
+      '<div style="background:' + (isHoje ? '#fff8e1' : isFimSemana ? '#fafafa' : 'transparent') + ';border-radius:8px;padding:8px;border:1px solid var(--gray2)">'
+      + '<div style="font-size:11px;font-weight:700;text-transform:uppercase;margin-bottom:8px">' + nomesDia[dia.getDay()] + ' ' + dia.getDate() + '/' + (dia.getMonth()+1) + '</div>'
+      + cards + '</div>'
+    );
+  }
+  grid.innerHTML = colunas.join('');
+}
+
+function abrirDrawerFornecedor(id) {
+  var f = S_PROM.fornecedores.filter(function(x) { return x.id === id; })[0];
+  if (!f) return;
+  var visitasDoFornecedor = S_PROM.visitas.filter(function(v) { return v.fornecedorId === id; })
+    .sort(function(a, b) { return (b.dataAgendada||'') < (a.dataAgendada||'') ? -1 : 1; })
+    .slice(0, 6);
+
+  var nomesDia = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'];
+  var diasTexto = (f.diasSemana || []).map(function(d) { return nomesDia[d]; }).join(', ') || '-';
+
+  var historico = visitasDoFornecedor.map(function(v) {
+    var duracao = '-';
+    if (v.checkInEm && v.checkOutEm) {
+      var ini = v.checkInEm.toDate ? v.checkInEm.toDate() : new Date(v.checkInEm);
+      var fim = v.checkOutEm.toDate ? v.checkOutEm.toDate() : new Date(v.checkOutEm);
+      duracao = Math.round((fim - ini) / 60000) + ' min';
+    }
+    return '<div style="padding:8px 0;border-bottom:1px solid var(--gray2);font-size:12px">'
+      + '<div style="font-weight:700">' + (v.dataAgendada||'-') + ' · ' + labelStatusVisita(v.status) + '</div>'
+      + '<div style="color:var(--t3)">' + _escHtml(v.lojaNome||'-') + ' · ' + _escHtml(v.promotorNome||'-') + ' · Duração: ' + duracao + '</div></div>';
+  }).join('') || '<div class="empty">Sem visitas registradas ainda.</div>';
+
+  document.getElementById('drawer-fornecedor-conteudo').innerHTML =
+    '<div style="font-family:\'Plus Jakarta Sans\',sans-serif;font-size:18px;font-weight:700;margin-bottom:4px">' + _escHtml(f.nome) + '</div>'
+    + '<div style="font-size:12px;color:var(--t3);margin-bottom:16px">' + _escHtml(f.telefone||'sem telefone') + (f.email ? ' · ' + _escHtml(f.email) : '') + '</div>'
+    + '<div style="background:#f8f9fa;border-radius:10px;padding:12px;margin-bottom:16px;font-size:12px">'
+    + '<div><strong>Lojas:</strong> ' + _escHtml((f.lojas||[]).join(', ')) + '</div>'
+    + '<div><strong>Dias esperados:</strong> ' + diasTexto + '</div>'
+    + '<div><strong>Periodicidade:</strong> ' + (f.periodicidade || '-') + '</div></div>'
+    + '<div style="font-weight:700;font-size:13px;margin-bottom:8px">Últimas visitas</div>'
+    + historico;
+
+  document.getElementById('drawer-fornecedor-bg').style.display = 'block';
+  document.getElementById('drawer-fornecedor').style.display = 'block';
+}
+
+function fecharDrawerFornecedor() {
+  document.getElementById('drawer-fornecedor-bg').style.display = 'none';
+  document.getElementById('drawer-fornecedor').style.display = 'none';
+}
+
+function renderRankingsPromotores() {
+  var realizadas = S_PROM.visitas.filter(function(v) { return v.status === 'realizada'; });
+
+  // Pontualidade por promotor
+  var porPromotor = {};
+  realizadas.forEach(function(v) {
+    var p = calcPontualidade(v);
+    if (!p) return;
+    var chave = v.promotorNome || '-';
+    if (!porPromotor[chave]) porPromotor[chave] = {total: 0, pontual: 0};
+    porPromotor[chave].total++;
+    if (p === 'pontual' || p === 'antecipado') porPromotor[chave].pontual++;
+  });
+  var rankPromotor = Object.keys(porPromotor).map(function(nome) {
+    return {nome: nome, pct: Math.round((porPromotor[nome].pontual / porPromotor[nome].total) * 100)};
+  }).sort(function(a, b) { return b.pct - a.pct; }).slice(0, 5);
+
+  // Tempo médio em loja
+  var temposPorPromotor = {};
+  realizadas.forEach(function(v) {
+    if (!v.checkInEm || !v.checkOutEm) return;
+    var ini = v.checkInEm.toDate ? v.checkInEm.toDate() : new Date(v.checkInEm);
+    var fim = v.checkOutEm.toDate ? v.checkOutEm.toDate() : new Date(v.checkOutEm);
+    var min = (fim - ini) / 60000;
+    var chave = v.promotorNome || '-';
+    if (!temposPorPromotor[chave]) temposPorPromotor[chave] = [];
+    temposPorPromotor[chave].push(min);
+  });
+  var rankTempo = Object.keys(temposPorPromotor).map(function(nome) {
+    var lista = temposPorPromotor[nome];
+    var media = lista.reduce(function(a, b) { return a + b; }, 0) / lista.length;
+    return {nome: nome, media: Math.round(media)};
+  }).sort(function(a, b) { return b.media - a.media; }).slice(0, 5);
+
+  // Cumprimento por fornecedor
+  var porFornecedor = {};
+  S_PROM.visitas.forEach(function(v) {
+    var chave = v.fornecedorNome || '-';
+    if (!porFornecedor[chave]) porFornecedor[chave] = {total: 0, realizadas: 0};
+    porFornecedor[chave].total++;
+    if (v.status === 'realizada') porFornecedor[chave].realizadas++;
+  });
+  var rankFornecedor = Object.keys(porFornecedor).map(function(nome) {
+    return {nome: nome, pct: Math.round((porFornecedor[nome].realizadas / porFornecedor[nome].total) * 100)};
+  }).sort(function(a, b) { return b.pct - a.pct; }).slice(0, 5);
+
+  function bloco(titulo, itens, sufixo) {
+    var linhas = itens.map(function(it, i) {
+      var valor = sufixo === '%' ? it.pct + '%' : it.media + ' min';
+      return '<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--gray2);font-size:12px">'
+        + '<span>' + (i+1) + '. ' + _escHtml(it.nome) + '</span><strong>' + valor + '</strong></div>';
+    }).join('') || '<div class="empty" style="font-size:12px">Sem dados ainda.</div>';
+    return '<div class="card" style="padding:14px"><div style="font-weight:700;font-size:13px;margin-bottom:8px">' + titulo + '</div>' + linhas + '</div>';
+  }
+
+  document.getElementById('promotores-rankings').innerHTML =
+    bloco('Ranking de Pontualidade', rankPromotor, '%')
+    + bloco('Tempo Médio em Loja', rankTempo, 'min')
+    + bloco('Cumprimento por Fornecedor', rankFornecedor, '%');
+}
+
+function toggleDiaFornecedor(btn) {
+  btn.classList.toggle('btn-p');
+  btn.classList.toggle('btn-s');
 }
 
 function abrirModalFornecedor(id) {
   document.getElementById('forn-id').value = id || '';
   document.getElementById('forn-nome').value = '';
+  document.getElementById('forn-telefone').value = '';
+  document.getElementById('forn-email').value = '';
   document.getElementById('forn-lojas').value = '';
+  document.getElementById('forn-periodicidade').value = 'semanal';
+  document.querySelectorAll('#forn-dias .dia-btn').forEach(function(b) {
+    b.classList.remove('btn-p'); b.classList.add('btn-s');
+  });
   document.getElementById('modal-fornecedor').style.display = 'flex';
   if (id) {
     fornecedoresCol().doc(id).get().then(function(doc) {
       var f = doc.data();
-      document.getElementById('forn-nome').value = f.nome;
-      document.getElementById('forn-lojas').value = (f.lojas||[]).join(',');
+      document.getElementById('forn-nome').value = f.nome || '';
+      document.getElementById('forn-telefone').value = f.telefone || '';
+      document.getElementById('forn-email').value = f.email || '';
+      document.getElementById('forn-lojas').value = (f.lojas || []).join(',');
+      document.getElementById('forn-periodicidade').value = f.periodicidade || 'semanal';
+      (f.diasSemana || []).forEach(function(dia) {
+        var btn = document.querySelector('#forn-dias .dia-btn[data-dia="' + dia + '"]');
+        if (btn) { btn.classList.remove('btn-s'); btn.classList.add('btn-p'); }
+      });
     });
   }
 }
@@ -4306,22 +5001,38 @@ function salvarFornecedor() {
   var nome = document.getElementById('forn-nome').value.trim();
   var lojas = document.getElementById('forn-lojas').value.split(',').map(function(s){return s.trim();}).filter(Boolean);
   if (!nome || !lojas.length) { showToast('Preencha nome e ao menos uma loja.'); return; }
-  var dados = {nome: nome, lojas: lojas, ativo: true};
+  var diasSemana = Array.prototype.slice.call(document.querySelectorAll('#forn-dias .dia-btn.btn-p'))
+    .map(function(b) { return parseInt(b.getAttribute('data-dia'), 10); });
+  var dados = {
+    nome: nome,
+    telefone: document.getElementById('forn-telefone').value.trim() || null,
+    email: document.getElementById('forn-email').value.trim() || null,
+    lojas: lojas,
+    diasSemana: diasSemana,
+    periodicidade: document.getElementById('forn-periodicidade').value,
+    ativo: true
+  };
   var op = id ? fornecedoresCol().doc(id).update(dados) : fornecedoresCol().add(dados);
   op.then(function() {
     document.getElementById('modal-fornecedor').style.display = 'none';
-    renderFornecedores();
+    showToast('Fornecedor salvo.');
+    if (typeof renderPromotoresPainel === 'function') renderPromotoresPainel();
   });
 }
 
-function excluirFornecedor(id) {
-  if (!confirm('Excluir este fornecedor?')) return;
-  fornecedoresCol().doc(id).delete().then(renderFornecedores);
+function renderQrGridLojas() {
+  var lojas = getLojasUnicas(S_PROM.fornecedores);
+  var wrap = document.getElementById('promotores-qr-grid');
+  if (!lojas.length) { wrap.innerHTML = '<div class="empty">Cadastre um fornecedor com loja pra gerar QR codes.</div>'; return; }
+  wrap.innerHTML = lojas.map(function(lojaId) {
+    return '<div class="card" style="padding:14px;text-align:center">'
+      + '<div style="font-size:12px;font-weight:700;margin-bottom:8px">Loja ' + _escHtml(lojaId) + '</div>'
+      + '<button class="btn btn-s btn-sm" style="width:100%" onclick="abrirQrLoja(\'' + lojaId.replace(/'/g, "\\'") + '\')">Ver / Imprimir</button></div>';
+  }).join('');
 }
 
-function abrirQrFornecedor(lojaId) {
-  if (!lojaId) { showToast('Esse fornecedor não tem loja cadastrada.'); return; }
-  var url = location.origin + '/checkin.html?c=' + S.clienteConfig.id + '&l=' + lojaId;
+function abrirQrLoja(lojaId) {
+  var url = location.origin + location.pathname + '?checkin=1&c=' + S.clienteConfig.id + '&l=' + lojaId;
   var qr = qrcode(0, 'M');
   qr.addData(url);
   qr.make();
@@ -9548,8 +10259,8 @@ function _renderClientesLista() {
   var wrap = document.getElementById('painel-clientes-wrap');
   if (!wrap) return;
   var hoje = new Date(); hoje.setHours(0,0,0,0);
-  var MODS = ['checklist','inventario','planos_acao','relatorios','central','monitor','etiquetas'];
-  var MODS_LABEL = {checklist:'Checklist',inventario:'Inventário',planos_acao:'Planos',alertas:'Alertas',relatorios:'Relatórios',central:'Central',monitor:'Monitor',etiquetas:'Etiquetas'};
+  var MODS = ['checklist','inventario','planos_acao','relatorios','central','monitor','etiquetas','promotores'];
+  var MODS_LABEL = {checklist:'Checklist',inventario:'Inventário',planos_acao:'Planos',alertas:'Alertas',relatorios:'Relatórios',central:'Central',monitor:'Monitor',etiquetas:'Etiquetas',promotores:'Promotores'};
   var PLANO_LABEL = {basico:'Básico',completo:'Completo',premium:'Premium'};
 
   var ativosCount = _clientesCache.filter(function(c){ return c.ativo !== false; }).length;
@@ -9568,7 +10279,7 @@ function _renderClientesLista() {
     var licBg  = semLic||vencido ? '#fdecea'  : diasR<=7 ? '#fef3e2' : '#d1f0e0';
     var licTxt = semLic ? 'Sem licença' : vencido ? 'Vencida em '+venc.toLocaleDateString('pt-BR') : diasR+' dias · até '+venc.toLocaleDateString('pt-BR');
     var modBadges = MODS.map(function(m){
-      var on = !c.modulos || c.modulos[m] !== false;
+      var on = MODULOS_OPT_IN[m] ? (c.modulos && c.modulos[m] === true) : (!c.modulos || c.modulos[m] !== false);
       return on ? '<span style="display:inline-block;padding:2px 7px;border-radius:8px;font-size:10px;font-weight:600;margin:2px;background:#e8f5ee;color:#1a5c34">'+MODS_LABEL[m]+'</span>' : '';
     }).join('');
     var safeId = c.id.replace(/'/g,"\\'");
@@ -9763,10 +10474,10 @@ function _atualizarVersaoClientes() {
 
 function abrirEditarCliente(clienteId) {
   var c = _clientesCache.find(function(x){ return x.id===clienteId; }) || {};
-  var MODS = ['checklist','inventario','planos_acao','relatorios','central','monitor','etiquetas'];
-  var MODS_LABEL = {checklist:'Checklist',inventario:'Inventário',planos_acao:'Planos de Ação',alertas:'Alertas',relatorios:'Relatórios',central:'Central de Resultados',monitor:'Monitor',etiquetas:'Etiquetas'};
+  var MODS = ['checklist','inventario','planos_acao','relatorios','central','monitor','etiquetas','promotores'];
+  var MODS_LABEL = {checklist:'Checklist',inventario:'Inventário',planos_acao:'Planos de Ação',alertas:'Alertas',relatorios:'Relatórios',central:'Central de Resultados',monitor:'Monitor',etiquetas:'Etiquetas',promotores:'Promotores'};
   var modHtml = MODS.map(function(m){
-    var on = !c.modulos || c.modulos[m] !== false;
+    var on = MODULOS_OPT_IN[m] ? (c.modulos && c.modulos[m] === true) : (!c.modulos || c.modulos[m] !== false);
     var ls = on ? 'background:rgba(34,197,94,.1);color:#15803d;border-radius:8px;' : 'color:var(--t2);border-radius:8px;';
     return '<label onchange="var i=this.querySelector(\'input\');this.style.background=i.checked?\'rgba(34,197,94,.1)\':\'\';this.style.color=i.checked?\'#15803d\':\'\';" style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:7px 10px;font-size:13px;font-weight:600;'+ls+'">'+
       '<input type="checkbox" id="ec-mod-'+m+'"'+(on?' checked':'')+' style="width:16px;height:16px;accent-color:#22c55e;flex-shrink:0"> '+MODS_LABEL[m]+'</label>';
@@ -9800,7 +10511,7 @@ function fecharEditarCliente() {
 }
 
 function salvarEdicaoCliente(clienteId) {
-  var MODS = ['checklist','inventario','planos_acao','perdas','relatorios','central','monitor','etiquetas'];
+  var MODS = ['checklist','inventario','planos_acao','perdas','relatorios','central','monitor','etiquetas','promotores'];
   var modulos = {};
   MODS.forEach(function(m){ modulos[m] = !!(document.getElementById('ec-mod-'+m)||{}).checked; });
   var dados = {
@@ -9820,11 +10531,15 @@ function salvarEdicaoCliente(clienteId) {
 }
 
 function abrirNovoCliente() {
-  var MODS = ['checklist','inventario','planos_acao','relatorios','central','monitor','etiquetas'];
-  var MODS_LABEL = {checklist:'Checklist',inventario:'Inventário',planos_acao:'Planos de Ação',alertas:'Alertas',relatorios:'Relatórios',central:'Central de Resultados',monitor:'Monitor',etiquetas:'Etiquetas'};
+  var MODS = ['checklist','inventario','planos_acao','relatorios','central','monitor','etiquetas','promotores'];
+  var MODS_LABEL = {checklist:'Checklist',inventario:'Inventário',planos_acao:'Planos de Ação',alertas:'Alertas',relatorios:'Relatórios',central:'Central de Resultados',monitor:'Monitor',etiquetas:'Etiquetas',promotores:'Promotores'};
   var modHtml = MODS.map(function(m){
-    return '<label onchange="var i=this.querySelector(\'input\');this.style.background=i.checked?\'rgba(34,197,94,.1)\':\'\';this.style.color=i.checked?\'#15803d\':\'\';" style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:7px 10px;font-size:13px;font-weight:600;background:rgba(34,197,94,.1);color:#15803d;border-radius:8px;">'+
-      '<input type="checkbox" id="nc-mod-'+m+'" checked style="width:16px;height:16px;accent-color:#22c55e;flex-shrink:0"> '+MODS_LABEL[m]+'</label>';
+    // Módulos opt-in (ver MODULOS_OPT_IN) nascem DESMARCADOS mesmo em
+    // cliente novo — precisa contratar explicitamente.
+    var on = !MODULOS_OPT_IN[m];
+    var ls = on ? 'background:rgba(34,197,94,.1);color:#15803d;' : 'color:var(--t2);';
+    return '<label onchange="var i=this.querySelector(\'input\');this.style.background=i.checked?\'rgba(34,197,94,.1)\':\'\';this.style.color=i.checked?\'#15803d\':\'\';" style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:7px 10px;font-size:13px;font-weight:600;border-radius:8px;'+ls+'">'+
+      '<input type="checkbox" id="nc-mod-'+m+'"'+(on?' checked':'')+' style="width:16px;height:16px;accent-color:#22c55e;flex-shrink:0"> '+MODS_LABEL[m]+'</label>';
   }).join('');
   var html = '<div id="modal-novo-cliente" onclick="if(event.target===this)fecharNovoCliente()" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:3000;display:flex;align-items:center;justify-content:center;padding:16px">'+
     '<div style="background:#fff;border-radius:16px;padding:28px 24px;width:100%;max-width:440px;max-height:90vh;overflow-y:auto">'+
@@ -9851,7 +10566,7 @@ function fecharNovoCliente() {
 }
 
 function criarNovoCliente() {
-  var MODS = ['checklist','inventario','planos_acao','perdas','relatorios','central','monitor','etiquetas'];
+  var MODS = ['checklist','inventario','planos_acao','perdas','relatorios','central','monitor','etiquetas','promotores'];
   var nome = (document.getElementById('nc-nome')||{}).value||'';
   var id = ((document.getElementById('nc-id')||{}).value||'').toLowerCase().replace(/[^a-z0-9]/g,'');
   var errEl = document.getElementById('nc-err');

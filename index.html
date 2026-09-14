@@ -18,9 +18,12 @@
 <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.20.0/umd/index.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jsbarcode/3.12.3/JsBarcode.all.min.js"></script>
 
-<link rel="stylesheet" href="style.css?v=334"/>
+<link rel="stylesheet" href="style.css?v=346"/>
 </head>
 <body>
+
+<!-- CHECK-IN DE PROMOTOR CONVIDADO (?checkin=1) — overlay tomado pela IIFE em app.js -->
+<div id="checkin-guest-overlay" style="display:none"></div>
 
 <!-- BANNER OFFLINE -->
 <div id="offline-banner" style="display:none;position:fixed;top:0;left:0;right:0;z-index:9999;background:#c0392b;color:#fff;text-align:center;padding:9px 16px;font-size:13px;font-weight:600;letter-spacing:.3px">
@@ -549,36 +552,136 @@
       </div>
 
       <div id="panel-promotores" class="panel">
-        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px">
-          <div><div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:18px;font-weight:700">Promotores</div><div style="font-size:13px;color:var(--t3);margin-top:2px">Fornecedores e visitas por loja</div></div>
-        </div>
-        <div class="tabs" id="promotores-tabs" style="margin-bottom:16px">
-          <div class="tab on" onclick="switchPromotoresTab('fornecedores',this)">Fornecedores</div>
-          <div class="tab" onclick="switchPromotoresTab('visitas',this)">Visitas</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;flex-wrap:wrap;gap:10px">
+          <div><div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:18px;font-weight:700">Gestão de Promotores</div><div style="font-size:13px;color:var(--t3);margin-top:2px">Fornecedores, agenda e visitas por loja</div></div>
+          <div id="promotores-agendamento-btn" style="display:flex;gap:8px"></div>
         </div>
 
-        <div id="promotores-tab-fornecedores">
-          <button class="btn btn-p btn-sm" style="margin-bottom:14px" onclick="abrirModalFornecedor()">+ Novo Fornecedor</button>
-          <div id="fornecedores-lista"></div>
+        <div id="promotores-kpis"></div>
+        <div id="promotores-cumprimento" style="margin:14px 0"></div>
+
+        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+          <input id="promotores-busca" placeholder="Buscar por fornecedor, promotor ou loja..." style="flex:1;min-width:220px;padding:10px 12px;border:1px solid var(--gray2);border-radius:10px;font-size:13px" oninput="buscarPromotores(this.value)">
+          <button class="btn btn-s btn-sm" onclick="abrirAgendaSemanal()">📅 Agenda Semanal</button>
         </div>
 
-        <div id="promotores-tab-visitas" style="display:none">
-          <div id="visitas-lista"></div>
+        <div class="tabs" id="promotores-filtros">
+          <div class="tab on" data-filtro="todos" onclick="aplicarFiltroPromotores('todos',this)">Todos</div>
+          <div class="tab" data-filtro="hoje" onclick="aplicarFiltroPromotores('hoje',this)">Hoje</div>
+          <div class="tab" data-filtro="agendada" onclick="aplicarFiltroPromotores('agendada',this)">Agendados</div>
+          <div class="tab" data-filtro="na_loja" onclick="aplicarFiltroPromotores('na_loja',this)">Na Loja</div>
+          <div class="tab" data-filtro="realizada" onclick="aplicarFiltroPromotores('realizada',this)">Realizados</div>
+          <div class="tab" data-filtro="nao_compareceu" onclick="aplicarFiltroPromotores('nao_compareceu',this)">Não Compareceram</div>
+          <div class="tab" data-filtro="fim_de_semana" onclick="aplicarFiltroPromotores('fim_de_semana',this)">Fim de Semana</div>
+          <div class="tab" data-filtro="proximos7" onclick="aplicarFiltroPromotores('proximos7',this)">Próximos 7 dias</div>
+        </div>
+
+        <div id="promotores-tabela"></div>
+
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin-top:24px" id="promotores-rankings"></div>
+
+        <div style="margin-top:24px">
+          <div style="font-weight:700;font-size:14px;margin-bottom:10px">Fornecedores cadastrados</div>
+          <button class="btn btn-p btn-sm" style="margin-bottom:12px" onclick="abrirModalFornecedor()">+ Novo Fornecedor</button>
+          <div id="promotores-fornecedores-lista"></div>
+        </div>
+
+        <div style="margin-top:24px">
+          <div style="font-weight:700;font-size:14px;margin-bottom:10px">QR codes por loja</div>
+          <div id="promotores-qr-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:12px"></div>
         </div>
       </div>
 
       <div class="modal-bg" id="modal-fornecedor" style="display:none">
-        <div class="modal-box" style="width:420px">
+        <div class="modal-box" style="width:440px">
           <div class="modal-title">Fornecedor</div>
           <input type="hidden" id="forn-id">
           <label>Nome</label>
           <input id="forn-nome" placeholder="Nome do fornecedor">
+          <label style="margin-top:12px">Telefone</label>
+          <input id="forn-telefone" placeholder="(00) 00000-0000">
+          <label style="margin-top:12px">E-mail</label>
+          <input id="forn-email" type="email" placeholder="contato@fornecedor.com">
           <label style="margin-top:12px">Lojas atendidas (IDs separados por vírgula)</label>
           <input id="forn-lojas" placeholder="1,2,3">
-          <div class="btn-row" style="margin-top:16px">
+          <label style="margin-top:12px">Dias da semana esperados</label>
+          <div id="forn-dias" style="display:flex;gap:6px;margin-bottom:16px">
+            <button type="button" class="btn btn-s btn-sm dia-btn" data-dia="1" onclick="toggleDiaFornecedor(this)">Seg</button>
+            <button type="button" class="btn btn-s btn-sm dia-btn" data-dia="2" onclick="toggleDiaFornecedor(this)">Ter</button>
+            <button type="button" class="btn btn-s btn-sm dia-btn" data-dia="3" onclick="toggleDiaFornecedor(this)">Qua</button>
+            <button type="button" class="btn btn-s btn-sm dia-btn" data-dia="4" onclick="toggleDiaFornecedor(this)">Qui</button>
+            <button type="button" class="btn btn-s btn-sm dia-btn" data-dia="5" onclick="toggleDiaFornecedor(this)">Sex</button>
+            <button type="button" class="btn btn-s btn-sm dia-btn" data-dia="6" onclick="toggleDiaFornecedor(this)">Sáb</button>
+            <button type="button" class="btn btn-s btn-sm dia-btn" data-dia="0" onclick="toggleDiaFornecedor(this)">Dom</button>
+          </div>
+          <label>Periodicidade</label>
+          <select id="forn-periodicidade" style="margin-bottom:16px">
+            <option value="semanal">Semanal</option>
+            <option value="diaria">Diária</option>
+            <option value="quinzenal">Quinzenal</option>
+            <option value="mensal">Mensal</option>
+          </select>
+          <div class="btn-row">
             <button class="btn btn-p" onclick="salvarFornecedor()">Salvar</button>
             <button class="btn btn-s" onclick="document.getElementById('modal-fornecedor').style.display='none'">Cancelar</button>
           </div>
+        </div>
+      </div>
+
+      <div class="modal-bg" id="modal-agendamento" style="display:none">
+        <div class="modal-box" style="width:460px">
+          <div class="modal-title">Novo Agendamento</div>
+          <label>Fornecedor</label>
+          <select id="ag-fornecedor"></select>
+          <label style="margin-top:12px">Nome do promotor</label>
+          <input id="ag-promotor-nome" placeholder="Nome completo">
+          <label style="margin-top:12px">Telefone do promotor</label>
+          <input id="ag-promotor-telefone" placeholder="(00) 00000-0000">
+          <label style="margin-top:12px">Loja</label>
+          <input id="ag-loja" placeholder="ID/nome da loja">
+          <div style="display:flex;gap:10px">
+            <div style="flex:1"><label style="margin-top:12px">Data inicial</label><input id="ag-data-inicial" type="date"></div>
+            <div style="flex:1"><label style="margin-top:12px">Hora</label><input id="ag-hora" type="time"></div>
+          </div>
+          <label style="margin-top:12px">Recorrência</label>
+          <div id="ag-dias" style="display:flex;gap:6px;margin-bottom:12px">
+            <button type="button" class="btn btn-s btn-sm dia-btn" data-dia="1" onclick="toggleDiaAgendamento(this)">Seg</button>
+            <button type="button" class="btn btn-s btn-sm dia-btn" data-dia="2" onclick="toggleDiaAgendamento(this)">Ter</button>
+            <button type="button" class="btn btn-s btn-sm dia-btn" data-dia="3" onclick="toggleDiaAgendamento(this)">Qua</button>
+            <button type="button" class="btn btn-s btn-sm dia-btn" data-dia="4" onclick="toggleDiaAgendamento(this)">Qui</button>
+            <button type="button" class="btn btn-s btn-sm dia-btn" data-dia="5" onclick="toggleDiaAgendamento(this)">Sex</button>
+            <button type="button" class="btn btn-s btn-sm dia-btn" data-dia="6" onclick="toggleDiaAgendamento(this)">Sáb</button>
+            <button type="button" class="btn btn-s btn-sm dia-btn" data-dia="0" onclick="toggleDiaAgendamento(this)">Dom</button>
+          </div>
+          <label>Periodicidade</label>
+          <select id="ag-periodicidade">
+            <option value="">Avulso (só a data inicial)</option>
+            <option value="diaria">Diária</option>
+            <option value="semanal">Semanal</option>
+            <option value="quinzenal">Quinzenal</option>
+            <option value="mensal">Mensal</option>
+          </select>
+          <label style="margin-top:12px">Data final (obrigatório se recorrente)</label>
+          <input id="ag-data-final" type="date" style="margin-bottom:16px">
+          <div class="btn-row">
+            <button class="btn btn-p" onclick="salvarAgendamento()">Salvar</button>
+            <button class="btn btn-s" onclick="document.getElementById('modal-agendamento').style.display='none'">Cancelar</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="modal-bg" id="modal-agenda-semanal" style="display:none">
+        <div class="modal-box" style="width:900px;max-width:95vw">
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px">
+            <div class="modal-title" style="margin:0">Agenda Semanal</div>
+            <div style="display:flex;gap:6px;align-items:center">
+              <button class="btn btn-s btn-sm" onclick="renderAgendaSemanal(-1)">◀</button>
+              <button class="btn btn-s btn-sm" onclick="renderAgendaSemanal(0,true)">Hoje</button>
+              <button class="btn btn-s btn-sm" onclick="renderAgendaSemanal(1)">▶</button>
+            </div>
+          </div>
+          <div id="agenda-semanal-grid" style="display:grid;grid-template-columns:repeat(7,1fr);gap:8px;max-height:60vh;overflow-y:auto"></div>
+          <div class="btn-row" style="margin-top:16px"><button class="btn btn-s" style="width:100%" onclick="document.getElementById('modal-agenda-semanal').style.display='none'">Fechar</button></div>
         </div>
       </div>
 
@@ -588,6 +691,12 @@
           <div id="qr-container" style="margin:16px 0"></div>
           <button class="btn btn-s" style="width:100%" onclick="document.getElementById('modal-qr').style.display='none'">Fechar</button>
         </div>
+      </div>
+
+      <div id="drawer-fornecedor-bg" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.3);z-index:900" onclick="fecharDrawerFornecedor()"></div>
+      <div id="drawer-fornecedor" style="display:none;position:fixed;top:0;right:0;bottom:0;width:360px;max-width:90vw;background:#fff;z-index:901;box-shadow:-4px 0 20px rgba(0,0,0,.15);padding:22px;overflow-y:auto">
+        <button class="btn btn-s btn-sm" style="margin-bottom:16px" onclick="fecharDrawerFornecedor()">← Fechar</button>
+        <div id="drawer-fornecedor-conteudo"></div>
       </div>
 
       <div id="panel-etiquetas" class="panel">
@@ -1954,7 +2063,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="client.js"></script>
 <script src="qrcode-generator.min.js"></script>
-<script src="app.js?v=345" defer></script>
+<script src="app.js?v=346" defer></script>
 
 
 </body>
