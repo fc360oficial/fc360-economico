@@ -1270,6 +1270,29 @@
 
           <!-- Tab Auditoria -->
           <div id="inv-tab-auditoria" style="display:none;margin-top:14px">
+            <!-- Resultado do balanço -->
+            <div class="card" style="max-width:920px;margin-bottom:14px">
+              <div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:15px;font-weight:700;margin-bottom:6px">Resultado: Contado × Sistema</div>
+              <p style="font-size:13px;color:var(--t2);margin-bottom:12px">Compara a contagem com o estoque do sistema por produto, com sobra, falta e valor a custo. Lista os endereços que mais vale recontar.</p>
+              <button class="btn btn-p" onclick="calcularResultadoBalanco()">📊 Calcular resultado</button>
+              <div id="inv-resultado-wrap" style="margin-top:14px"></div>
+            </div>
+            <!-- Pendências -->
+            <div class="card" style="max-width:920px;margin-bottom:14px">
+              <div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:15px;font-weight:700;margin-bottom:6px">Pendências antes de exportar</div>
+              <p style="font-size:13px;color:var(--t2);margin-bottom:12px">Códigos bipados que não estão no catálogo e itens registrados sem código. Precisam de cadastro ou correção no ERP.</p>
+              <button class="btn btn-s" onclick="mostrarPendenciasBalanco()">⚠ Verificar pendências</button>
+              <div id="inv-pendencias-wrap" style="margin-top:14px"></div>
+            </div>
+            <!-- Folha de conferência por endereço -->
+            <div class="card" style="max-width:520px;margin-bottom:14px">
+              <div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:15px;font-weight:700;margin-bottom:6px">Folha de Conferência (papel)</div>
+              <p style="font-size:13px;color:var(--t2);margin-bottom:12px">Uma folha A4 por endereço, na ordem em que foi bipado, com espaço pra quantidade conferida e visto.</p>
+              <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+                <select id="folha-conf-end" style="flex:1;min-width:160px;padding:9px 12px;border:1.5px solid var(--gray2);border-radius:9px;font-size:13px;font-family:inherit"></select>
+                <button class="btn btn-p" onclick="imprimirFolhaConferencia()">🖨️ Imprimir</button>
+              </div>
+            </div>
             <!-- Relatório PDF -->
             <div class="card" style="max-width:520px;margin-bottom:14px">
               <div style="font-family:'Plus Jakarta Sans',sans-serif;font-size:15px;font-weight:700;margin-bottom:6px">Relatório PDF</div>
@@ -1311,6 +1334,7 @@
                 <option value="ESTOQUE">ESTOQUE</option>
                 <option value="LOJA">LOJA</option>
               </select>
+              <span id="inv-bip-count" style="font-size:12px;color:var(--t3);font-weight:600"></span>
               <label style="font-size:12px;display:flex;align-items:center;gap:4px;font-weight:600"><input type="checkbox" id="inv-bip-nc" onchange="renderInvBipagens(document.getElementById('inv-bip-filter').value||null,null,document.getElementById('inv-bip-setor-filter').value||null)"> Só não cadastrados</label>
               <button class="btn btn-s btn-sm" onclick="renderInvBipagens(null,null,null);document.getElementById('inv-bip-filter').value='';document.getElementById('inv-bip-setor-filter').value='';document.getElementById('inv-bip-col-filter').style.display='none';_fecharCorrecaoView()">Todos</button>
             </div>
@@ -1494,8 +1518,8 @@
 
 <!-- MODAL NOVO INVENTÁRIO -->
 <div class="modal-bg" id="modal-cat-map" style="display:none">
-  <div class="modal" style="max-width:560px">
-    <div class="modal-h">Importar catálogo — confirme as colunas</div>
+  <div class="modal-box" style="width:560px;max-width:95vw">
+    <div class="modal-title">Importar catálogo — confirme as colunas</div>
     <div id="cat-map-prev" style="font-family:monospace;font-size:11px;background:var(--gray);padding:8px;border-radius:8px;margin-bottom:12px;overflow-x:auto;white-space:pre"></div>
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;font-size:12px;font-weight:600">
       <label>Código interno<br><select id="cat-map-codigo" style="width:100%"></select></label>
@@ -1503,6 +1527,7 @@
       <label>Descrição<br><select id="cat-map-desc" style="width:100%"></select></label>
       <label>Unidade<br><select id="cat-map-un" style="width:100%"></select></label>
       <label>Estoque do sistema (opcional)<br><select id="cat-map-estoque" style="width:100%"></select></label>
+      <label>Custo unitário (opcional)<br><select id="cat-map-custo" style="width:100%"></select></label>
       <label style="display:flex;align-items:center;gap:6px;margin-top:16px"><input type="checkbox" id="cat-map-header"> 1ª linha é cabeçalho</label>
     </div>
     <div class="modal-err" id="cat-map-err" style="margin-top:8px"></div>
@@ -2113,7 +2138,7 @@
 <script src="client.js"></script>
 <script src="qrcode-generator.min.js"></script>
 <script src="lib/inv-bip-core.js?v=1"></script>
-<script src="app.js?v=362" defer></script>
+<script src="app.js?v=370" defer></script>
 
 
 </body>
