@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '394';
+var BUILD = '406';
 var ETIQUETAS_API_URL = 'https://hhk0a8gt2cn.sn.mynetname.net/etiquetas-api';
 (function() {
   var vEl = document.getElementById('sb-versao');
@@ -14706,11 +14706,13 @@ function _iniciarCamFixa(){
   '</div>';
   var hints=new Map();
   hints.set(ZXing.DecodeHintType.POSSIBLE_FORMATS,[ZXing.BarcodeFormat.EAN_13,ZXing.BarcodeFormat.EAN_8,ZXing.BarcodeFormat.UPC_A,ZXing.BarcodeFormat.UPC_E,ZXing.BarcodeFormat.CODE_128]);
-  var reader=new ZXing.BrowserMultiFormatReader(hints);
+  // 80 ms entre tentativas (padrão da lib é 500 ms — com a dupla leitura exigida abaixo dava >1 s por item)
+  var reader=new ZXing.BrowserMultiFormatReader(hints, 80);
+  try { reader.timeBetweenDecodingAttempts=80; } catch(e){}
   _camFixa=reader; _atualizarBtnCamFixa();
-  reader.decodeFromConstraints({video:{facingMode:'environment'}},'inv-cam-video',function(result){
-    if (!result||_camFixa!==reader||_decisaoAberta()) return;
-    var val=result.getText(), agora=Date.now();
+  var leu=function(val){
+    if (_camFixa!==reader||_decisaoAberta()||!val) return;
+    var agora=Date.now();
     // Exige a mesma leitura 2x seguidas (em até 1,2 s) antes de aceitar: corta leitura errada da câmera
     if (!(_camFixaCand.val===val&&agora-_camFixaCand.t<1200)) { _camFixaCand={val:val,t:agora}; return; }
     if (val===_camFixaUltimo.val&&agora-_camFixaUltimo.t<2500) return; // mesma etiqueta ainda na frente da câmera
@@ -14723,9 +14725,40 @@ function _iniciarCamFixa(){
     ei.value=val; ei.dispatchEvent(new Event('input'));
     var m=document.getElementById('inv-cam-msg'); if(m){ m.textContent='Lido: '+val; setTimeout(function(){ if(m) m.textContent='Aponte pro código de barras'; },1500); }
     _eanEnterKey(true);
-  }).catch(function(err){ _pararCamFixa(); localStorage.setItem(_CAM_FIXA_KEY,'0'); showToast('Câmera indisponível: '+(err.message||err)); });
+  };
+  // 720p + foco contínuo: no padrão (640x480, sem pedir foco) o EAN chega borrado e o ZXing fica tentando.
+  var constraints={video:{facingMode:'environment',width:{ideal:1280},height:{ideal:720},focusMode:'continuous'}};
+  reader.decodeFromConstraints(constraints,'inv-cam-video',function(result){ if(result) leu(result.getText()); })
+  .then(function(){ _afinarCamFixa(reader); })
+  .catch(function(err){ _pararCamFixa(); localStorage.setItem(_CAM_FIXA_KEY,'0'); showToast('Câmera indisponível: '+(err.message||err)); });
+  // Leitor nativo do navegador (ML Kit) em PARALELO, quando existir: lê em ~1 frame. O ZXing continua
+  // rodando, então se o nativo não devolver nada (aparelho sem o módulo) nada muda.
+  if ('BarcodeDetector' in window) {
+    try {
+      var det=new BarcodeDetector({formats:['ean_13','ean_8','upc_a','upc_e','code_128']}), ocupado=false;
+      _camFixaDetTimer=setInterval(function(){
+        var v=document.getElementById('inv-cam-video');
+        if (_camFixa!==reader){ clearInterval(_camFixaDetTimer); _camFixaDetTimer=null; return; }
+        if (ocupado||!v||v.readyState<2) return;
+        ocupado=true;
+        det.detect(v).then(function(codes){ ocupado=false; if(codes&&codes.length) leu(codes[0].rawValue); }).catch(function(){ ocupado=false; });
+      }, 120);
+    } catch(e){}
+  }
+}
+var _camFixaDetTimer=null;
+// Depois que o stream abre: liga foco contínuo e um zoom leve (EAN pequeno fica legível de mais longe).
+function _afinarCamFixa(reader){
+  try {
+    var track=reader.stream&&reader.stream.getVideoTracks&&reader.stream.getVideoTracks()[0]; if(!track) return;
+    var cap=track.getCapabilities?track.getCapabilities():{}, adv=[];
+    if (cap.focusMode&&cap.focusMode.indexOf('continuous')>=0) adv.push({focusMode:'continuous'});
+    if (cap.zoom&&cap.zoom.max>=1.5) adv.push({zoom:Math.min(cap.zoom.max, Math.max(cap.zoom.min||1, 1.5))});
+    if (adv.length) track.applyConstraints({advanced:adv}).catch(function(){});
+  } catch(e){}
 }
 function _pararCamFixa(){
+  if (_camFixaDetTimer){ clearInterval(_camFixaDetTimer); _camFixaDetTimer=null; }
   if (_camFixa){ try{ _camFixa.reset(); }catch(e){} _camFixa=null; }
   var wrap=document.getElementById('inv-cam-fixa'); if(wrap){ wrap.innerHTML=''; wrap.style.display='none'; }
   _atualizarBtnCamFixa();
@@ -15007,14 +15040,18 @@ function renderColeta() {
           '<div style="flex:1;min-width:200px">'+
             '<label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t2);display:block;margin-bottom:6px">EAN / Código de Barras</label>'+
             '<div id="inv-desc-preview" style="font-size:13px;font-weight:600;margin-bottom:6px;min-height:20px"></div>'+
-            '<input id="inv-ean-input" type="text" inputmode="numeric" autocomplete="off" disabled placeholder="Carregando endereço..." style="width:100%;padding:13px 14px;border:2px solid var(--gray2);border-radius:10px;font-size:16px;font-family:monospace;letter-spacing:1px" onkeydown="if(event.key===\'Enter\')_eanEnterKey()"/>'+
+            '<div style="position:relative">'+
+              '<input id="inv-ean-input" type="text" inputmode="numeric" autocomplete="off" disabled placeholder="Carregando endereço..." style="width:100%;padding:13px 84px 13px 14px;border:2px solid var(--gray2);border-radius:10px;font-size:16px;font-family:monospace;letter-spacing:1px" onkeydown="if(event.key===\'Enter\')_eanEnterKey()"/>'+
+              '<button type="button" onmousedown="event.preventDefault()" onclick="_teclarEan()" title="Digitar o código pelo teclado do app" style="position:absolute;right:44px;top:50%;transform:translateY(-50%);width:34px;height:32px;border-radius:8px;border:1.5px solid var(--gray2);background:#fff;font-size:16px;line-height:1;color:var(--t2);cursor:pointer">⌨</button>'+
+              '<button type="button" onclick="_limparEan()" title="Apagar código lido errado" style="position:absolute;right:6px;top:50%;transform:translateY(-50%);width:32px;height:32px;border-radius:8px;border:1.5px solid var(--gray2);background:#fff;font-size:16px;line-height:1;color:var(--t2);cursor:pointer">✕</button>'+
+            '</div>'+
           '</div>'+
           '<button type="button" id="inv-cam-btn" onclick="_toggleCamFixa()" title="Ligar câmera (fica aberta pra ler em sequência)" style="padding:13px 16px;background:#fff;border:2px solid var(--gray2);border-radius:10px;font-size:18px;cursor:pointer">📷</button>'+
           '<div style="width:80px"><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t2);display:block;margin-bottom:6px">Qtd</label>'+
-            '<input id="inv-qty-input" type="number" value="1" min="1" style="width:100%;padding:13px 10px;border:2px solid var(--gray2);border-radius:10px;font-size:16px;text-align:center;font-family:inherit" onkeydown="return _qtyKeydown(event)" onfocus="_descFixa(true)" onblur="setTimeout(function(){ var a=document.activeElement; if(!a||(a.id!==\'inv-qty-input\'&&a.id!==\'inv-fator-input\')) _descFixa(false); },80)"/></div>'+
+            '<input id="inv-qty-input" type="number" inputmode="numeric" value="1" min="1" style="width:100%;padding:13px 10px;border:2px solid var(--gray2);border-radius:10px;font-size:16px;text-align:center;font-family:inherit" onkeydown="return _qtyKeydown(event)" onfocus="_qtyFocado()" onblur="setTimeout(function(){ var a=document.activeElement; if(_kpAlvo!==\'ean\'&&(!a||(a.id!==\'inv-qty-input\'&&a.id!==\'inv-fator-input\'))) _descFixa(false); },80)"/></div>'+
           '<div id="inv-fator-wrap" style="width:62px;'+(palletOn?'':'display:none')+'">'+
             '<label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t2);display:block;margin-bottom:6px">Qtd Emb</label>'+
-            '<input id="inv-fator-input" type="number" value="1" min="1" style="width:100%;padding:13px 8px;border:2px solid var(--gray2);border-radius:10px;font-size:16px;text-align:center;font-family:inherit" onkeydown="if(event.key===\'Enter\')registrarBipagem()" onfocus="_descFixa(true)" onblur="setTimeout(function(){ var a=document.activeElement; if(!a||(a.id!==\'inv-qty-input\'&&a.id!==\'inv-fator-input\')) _descFixa(false); },80)"/></div>'+
+            '<input id="inv-fator-input" type="number" value="1" min="1" style="width:100%;padding:13px 8px;border:2px solid var(--gray2);border-radius:10px;font-size:16px;text-align:center;font-family:inherit" onkeydown="if(event.key===\'Enter\')registrarBipagem()" onfocus="_descFixa(true,false)" onblur="setTimeout(function(){ var a=document.activeElement; if(_kpAlvo!==\'ean\'&&(!a||(a.id!==\'inv-qty-input\'&&a.id!==\'inv-fator-input\'))) _descFixa(false); },80)"/></div>'+
           '<button onclick="registrarBipagem()" style="padding:13px 22px;background:#FFC600;color:#111;border:none;border-radius:10px;font-size:14px;font-weight:700;cursor:pointer;font-family:inherit;white-space:nowrap">Registrar</button>'+
         '</div>'+
         '<div style="margin-top:10px;display:flex;justify-content:space-between;align-items:center;gap:10px">'+
@@ -15937,12 +15974,83 @@ function voltarInvLista() {
 
 // ── _eanEnterKey — Enter no campo EAN: vai pra qty se reconhecido ─────────
 
-// Faixa fixa acima do teclado com o produto lido, visível enquanto a Qtd está focada (a tela rola e o texto de cima some).
-function _descFixa(mostrar){
+// Faixa fixa embaixo com o produto lido + teclado numérico próprio pra Qtd.
+// Teclado nativo do Android é o padrão. Com leitor Bluetooth pareado (teclado físico via HID) o
+// Android suprime o teclado virtual e focus() via JS não reabre — aí, e só aí, entra o teclado próprio.
+function _descFixa(mostrar, keypad){
   var el=document.getElementById('inv-desc-fixo');
-  if(!el){ el=document.createElement('div'); el.id='inv-desc-fixo'; el.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:1500;background:#fff8e1;border-top:3px solid #FFC600;padding:10px 14px;font-size:15px;font-weight:700;color:#111;box-shadow:0 -4px 16px rgba(0,0,0,.15);display:none;line-height:1.3'; document.body.appendChild(el); }
+  if(!el){
+    el=document.createElement('div'); el.id='inv-desc-fixo';
+    el.style.cssText='position:fixed;left:0;right:0;bottom:0;z-index:1500;background:#fff8e1;border-top:3px solid #FFC600;padding:10px 14px calc(10px + env(safe-area-inset-bottom,0px));box-shadow:0 -4px 16px rgba(0,0,0,.15);display:none;max-height:70vh;overflow:auto';
+    el.innerHTML='<div id="inv-desc-fixo-txt" style="font-size:15px;font-weight:700;color:#111;line-height:1.3;margin-bottom:8px"></div>'+
+      '<div id="inv-desc-fixo-kp" style="display:none"></div>';
+    document.body.appendChild(el);
+    _montarKeypadQty();
+    // Barra do Gboard em modo "teclado físico" (leitor Bluetooth) fica por cima de bottom:0 sem
+    // encolher o layout — ancora a faixa no fim da viewport VISUAL, que desconta essa barra.
+    if (window.visualViewport) {
+      var _posFixa=function(){ var vv=window.visualViewport; el.style.bottom=Math.max(0, window.innerHeight-(vv.height+vv.offsetTop))+'px'; };
+      window.visualViewport.addEventListener('resize', _posFixa);
+      window.visualViewport.addEventListener('scroll', _posFixa);
+      el._posFixa=_posFixa;
+    }
+  }
+  if (el._posFixa) el._posFixa();
+  // Se a tela de coleta for trocada (Mudar Endereço, Próximo etc.) com a faixa aberta, some junto.
+  if (el._chk) { clearInterval(el._chk); el._chk=null; }
+  if (mostrar) el._chk=setInterval(function(){ if(!document.getElementById('inv-qty-input')){ clearInterval(el._chk); el._chk=null; el.style.display='none'; _kpAlvo='qty'; } }, 300);
   var pr=document.getElementById('inv-desc-preview'); var txt=pr?pr.textContent.trim():'';
-  if(mostrar&&txt){ el.textContent=txt+' — informe a quantidade'; el.style.display='block'; } else { el.style.display='none'; }
+  var txtEl=document.getElementById('inv-desc-fixo-txt'), kp=document.getElementById('inv-desc-fixo-kp');
+  if(mostrar&&(txt||keypad==='ean')){
+    _kpAlvo = keypad==='ean' ? 'ean' : 'qty';
+    if(txtEl) txtEl.textContent = _kpAlvo==='ean' ? 'Digite o código de barras e toque em ENTER' : txt+' — informe a quantidade';
+    el.style.display='block'; if(kp) kp.style.display=keypad?'block':'none';
+  } else { el.style.display='none'; _kpAlvo='qty'; }
+}
+// Alvo do teclado próprio: 'qty' (padrão, abre sozinho no foco da Qtd) ou 'ean' (sob demanda pelo botão ⌨).
+var _kpAlvo='qty';
+function _montarKeypadQty(){
+  var wrap=document.getElementById('inv-desc-fixo-kp'); if(!wrap) return;
+  // ENTER em cima e grade de 4 colunas: a barra do Gboard/navegação cobre o fim da tela, então o
+  // que importa fica no topo da faixa e o teclado inteiro cabe sem rolar.
+  // Mesmo desenho do teclado numérico do Gboard: 3 colunas de dígitos + coluna de ação à direita.
+  var base='border:none;border-radius:6px;font-family:inherit;font-size:22px;font-weight:500;height:48px;box-shadow:0 1px 0 rgba(0,0,0,.25);';
+  function tecla(b,extra){ return '<button type="button" onmousedown="event.preventDefault()" onclick="_kpQty(\''+b+'\')" style="'+base+(extra||'background:#fff;color:#202124')+'">'+b+'</button>'; }
+  var cinza='background:#c8ccd3;color:#202124;';
+  wrap.innerHTML='<div style="display:grid;grid-template-columns:repeat(4,1fr);grid-auto-rows:48px;gap:6px;background:#dfe3e8;padding:8px;margin:0 -14px calc(-10px - env(safe-area-inset-bottom,0px));padding-bottom:calc(8px + env(safe-area-inset-bottom,0px))">'+
+    tecla('1')+tecla('2')+tecla('3')+tecla('⌫',cinza)+
+    tecla('4')+tecla('5')+tecla('6')+tecla('C',cinza)+
+    tecla('7')+tecla('8')+tecla('9')+'<button type="button" id="inv-kp-enter" onmousedown="event.preventDefault()" onclick="_kpQty(\'ENTER\')" style="'+base+'grid-row:span 2;height:auto;background:#1a73e8;color:#fff;font-size:26px">↵</button>'+
+    '<button type="button" onmousedown="event.preventDefault()" onclick="_descFixa(false)" title="Fechar" style="'+base+cinza+'font-size:18px">⌄</button>'+tecla('0')+'<span></span>'+
+  '</div>';
+}
+// Botão ⌨ do EAN: abre o teclado próprio apontando pro código de barras (digitar manual ou corrigir leitura).
+function _teclarEan(){
+  var ei=document.getElementById('inv-ean-input'); if(!ei||ei.disabled) return;
+  var el=document.getElementById('inv-desc-fixo');
+  if(el&&el.style.display==='block'&&_kpAlvo==='ean'){ _descFixa(false); return; }
+  ei.dataset.limpo='1'; ei.focus();
+  _descFixa(true,'ean');
+}
+// Primeiro toque depois de focar/selecionar substitui o valor (como digitar por cima do texto selecionado).
+function _kpQty(b){
+  var alvo=document.getElementById(_kpAlvo==='ean'?'inv-ean-input':'inv-qty-input'); if(!alvo) return;
+  if(b==='ENTER'){ if(_kpAlvo==='ean'){ _eanEnterKey(); } else { registrarBipagem(); } return; }
+  if(b==='C'){ alvo.value=''; alvo.dataset.limpo='1'; }
+  else if(b==='⌫'){ alvo.value=alvo.value.slice(0,-1); alvo.dataset.limpo='1'; }
+  else {
+    if(alvo.dataset.limpo!=='1'){ alvo.value=''; alvo.dataset.limpo='1'; }
+    alvo.value = _kpAlvo==='ean' ? alvo.value+b : (alvo.value+b).replace(/^0+(?=\d)/,'');
+  }
+  // O EAN tem listener de 'input' (preview do produto, pulo pra Qtd em EAN completo): dispara igual ao digitar.
+  if(_kpAlvo==='ean') alvo.dispatchEvent(new Event('input',{bubbles:true}));
+}
+// Botão ✕ ao lado do EAN: apaga o código lido errado sem depender de teclado (o campo não abre
+// o teclado do SO por causa do leitor Bluetooth, então esse era o único jeito de corrigir).
+function _limparEan(){
+  var ei=document.getElementById('inv-ean-input'); if(!ei||ei.disabled) return;
+  ei.value=''; var pr=document.getElementById('inv-desc-preview'); if(pr) pr.textContent='';
+  ei.focus();
 }
 function _eanEnterKey(deScanner) {
   var ei=document.getElementById('inv-ean-input'); if(!ei) return;
@@ -15999,16 +16107,41 @@ var _rajadaQty = InvCore.criarDetectorRajada(100, 4);
 // Instante em que a Qtd recebeu foco por causa de uma leitura. O leitor Bluetooth manda Enter como sufixo
 // depois do último dígito; como o EAN completo já pulou o foco pra Qtd, esse Enter cairia aqui e gravaria com Qtd 1.
 var _qtyFocoScanTs = 0;
-// Pula pra Qtd depois de um bip: focus() disparado por JS logo após a "digitação" do leitor Bluetooth
-// costuma não reabrir o teclado no Android (o sistema trata o leitor como teclado físico conectado).
-// Alternar readOnly força o SO a reconsiderar o campo como recém-editável e reabrir o teclado.
+// Pula pra Qtd depois de um bip; o onfocus (_qtyFocado) decide se precisa do teclado próprio.
 function _focoQtyTeclado(qi) {
   if (!qi) return;
   _qtyFocoScanTs = Date.now();
+  qi.dataset.limpo = '';
   qi.focus(); qi.select();
-  qi.readOnly = true;
-  setTimeout(function(){ qi.readOnly = false; qi.focus(); qi.select(); }, 60);
 }
+// Foco na Qtd: mostra só a faixa com o produto e espera o teclado nativo. Se em 450 ms a viewport
+// visual não encolheu (teclado do Android não abriu — leitor Bluetooth pareado), abre o teclado próprio.
+var _qtyFocoChk = 0;
+// Maior altura visível já vista (sem teclado). Comparar com o momento do foco não serve: pela câmera o
+// teclado do Android já está aberto no campo do código quando a Qtd recebe o foco.
+var _vvMax = 0;
+function _vvAtualizarMax(){ var vv=window.visualViewport; var h=vv?vv.height:window.innerHeight; if(h>_vvMax) _vvMax=h; }
+_vvAtualizarMax();
+if (window.visualViewport) window.visualViewport.addEventListener('resize', _vvAtualizarMax);
+window.addEventListener('orientationchange', function(){ _vvMax=0; setTimeout(_vvAtualizarMax,600); });
+function _qtyFocado() {
+  _vvAtualizarMax();
+  _descFixa(true, false);
+  var id = ++_qtyFocoChk;
+  setTimeout(function(){
+    if (id !== _qtyFocoChk) return;
+    var a = document.activeElement; if (!a || a.id !== 'inv-qty-input') return;
+    if (_tecladoNativoAberto()) return;
+    _descFixa(true, true);
+  }, 600);
+}
+function _tecladoNativoAberto(){ var vv=window.visualViewport; return (_vvMax - (vv ? vv.height : window.innerHeight)) >= 120; }
+// Pela câmera o teclado do Android pode abrir depois da checagem: quando abrir, o próprio sai da frente.
+if (window.visualViewport) window.visualViewport.addEventListener('resize', function(){
+  var a=document.activeElement; if(!a||a.id!=='inv-qty-input'||_kpAlvo!=='qty') return;
+  var kp=document.getElementById('inv-desc-fixo-kp'); if(!kp||kp.style.display==='none') return;
+  if (_tecladoNativoAberto()) _descFixa(true, false);
+});
 function _qtyKeydown(ev) {
   if ((ev.key==='Enter'||ev.keyCode===13) && Date.now()-_qtyFocoScanTs<400) { ev.preventDefault(); return false; } // ninguém confirma Qtd em <0,4 s depois do pulo: é o sufixo do leitor
   if (ev.key==='Enter') { ev.preventDefault(); if(_getModoPallet()){ var fi=document.getElementById('inv-fator-input'); if(fi){fi.focus();fi.select();} } else registrarBipagem(); return false; }
@@ -16083,7 +16216,7 @@ function _registrarResolvido(lido, res, qtyTotal, fator, pularDup) {
   _bipsLocais.unshift(bip); if(_bipsLocais.length>50) _bipsLocais.length=50;
   _bipSom(bip.naoCadastrado?'alerta':'ok');
   var ei=document.getElementById('inv-ean-input'), qi=document.getElementById('inv-qty-input'), fi=document.getElementById('inv-fator-input');
-  if(ei) ei.value=''; if(qi) qi.value='1'; if(fi) fi.value='1';
+  if(ei) ei.value=''; if(qi){ qi.value='1'; qi.dataset.limpo=''; } if(fi) fi.value='1';
   var pr=document.getElementById('inv-desc-preview'); if(pr) pr.textContent='';
   var sl=document.getElementById('inv-seq-label'); if(sl) sl.textContent='Próx. seq: '+_nextSeq;
   _renderUltimasBipagens(_bipsLocais.slice(0,20), inv.id);
@@ -16152,7 +16285,7 @@ function _dupQtyKeydown(ev){
 function _cancelarJaColetado(){
   var m=document.getElementById('modal-dup'); if(m) m.remove(); _dupCtx=null; _dupChecadoChave=null;
   var ei=document.getElementById('inv-ean-input'), qi=document.getElementById('inv-qty-input'), pr=document.getElementById('inv-desc-preview');
-  if(ei) ei.value=''; if(qi) qi.value='1'; if(pr) pr.textContent=''; _descFixa(false); if(ei) ei.focus();
+  if(ei) ei.value=''; if(qi){ qi.value='1'; qi.dataset.limpo=''; } if(pr) pr.textContent=''; _descFixa(false); if(ei) ei.focus();
 }
 function _somarJaColetado(){
   var c=_dupCtx; if(!c) return;
