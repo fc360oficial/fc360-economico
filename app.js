@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '406';
+var BUILD = '411';
 var ETIQUETAS_API_URL = 'https://hhk0a8gt2cn.sn.mynetname.net/etiquetas-api';
 (function() {
   var vEl = document.getElementById('sb-versao');
@@ -3711,20 +3711,26 @@ function confirmarEnviar(assinatura) {
   db.collection('resultados').doc(res.id).set(res).then(function() {
     clearTimeout(_avisoDemoraTimer);
     var lista = getAllResultados();
-    // Se já existe envio hoje do mesmo checklist pelo mesmo operador, marca o anterior como resetado
+    // Se já existe envio hoje do mesmo checklist pelo mesmo operador, marca o anterior como resetado.
+    // O `r.id !== res.id` é obrigatório: o onSnapshot de `resultados` (iniciarResultadosRealtime)
+    // dispara na hora do set() por latency compensation, então o resultado recém-criado JÁ está
+    // dentro de S.resultadosCache quando este .then() roda — sem essa guarda ele casa com os
+    // próprios critérios e marca a si mesmo como resetado, sumindo de toda a retaguarda
+    // (que filtra !r.resetado) e destravando a tela como se nunca tivesse sido enviado.
     var _hojeReenv = new Date().toLocaleDateString('pt-BR');
     var _opAtual = S.currentUser ? S.currentUser.nome : '--';
     lista = lista.map(function(r) {
-      if (r.checklistId === clId && (r.dataHora||'').indexOf(_hojeReenv) === 0
+      if (r.id !== res.id && r.checklistId === clId && (r.dataHora||'').indexOf(_hojeReenv) === 0
           && r.operador === _opAtual && !r.resetado) {
         db.collection('resultados').doc(r.id).update({ resetado: true }).catch(function(){});
         return Object.assign({}, r, { resetado: true });
       }
       return r;
     });
-    // Salva sem assinatura no cache local (base64 enorme estoura localStorage)
+    // Salva sem assinatura no cache local (base64 enorme estoura localStorage).
+    // Mesmo motivo acima: só adiciona se o listener ainda não tiver trazido este doc.
     var resParaCache = Object.assign({}, res, {assinatura: null});
-    lista.push(resParaCache);
+    if (!lista.some(function(r){ return r.id === res.id; })) lista.push(resParaCache);
     S.resultadosCache = lista;
     try { localStorage.setItem(RESKEY, JSON.stringify(lista)); } catch(e) {}
     _finalizarEnvioCL(clId, cl, label, pct, reprovado, snapshot, setor);
@@ -13433,17 +13439,78 @@ function _renderUltimasBipagens(bips, invId) {
       wrap.innerHTML='<div style="text-align:center;padding:24px;color:var(--t3);font-size:13px">Nenhuma bipagem ainda. Comece a escanear!</div>';
       return;
     }
-    wrap.innerHTML='<table style="width:100%"><thead><tr><th style="width:55px">Seq</th><th>EAN</th><th>Descrição</th><th style="width:55px;text-align:center">Qtd</th></tr></thead><tbody>'+
+    wrap.innerHTML='<table style="width:100%"><thead><tr><th style="width:55px">Seq</th><th>EAN</th><th>Descrição</th><th style="width:55px;text-align:center">Qtd</th><th style="width:40px"></th></tr></thead><tbody>'+
       bips.map(function(b){
         var prod = _catItemDe(cat,b.codigo||b.ean)||{};
+        var podeExcluir = b._id && !b._pend && !b._erro && _invColetaAtual && !_invColetaAtual.concluido;
         return '<tr style="'+(b._erro?'background:#fdecea':b._pend?'opacity:.6':'')+'">'+
           '<td><span style="font-weight:700;color:var(--t3)">#'+b.seq+'</span></td>'+
           '<td style="font-family:monospace;font-size:12px">'+(b.codigo?'<b>'+b.codigo+'</b> · ':'')+b.ean+'</td>'+
           '<td style="font-size:12px">'+(prod.desc||'—')+(b.naoCadastrado?' <span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:8px;background:#fff3e0;color:#e65100">NC</span>':'')+'</td>'+
           '<td style="font-weight:700;text-align:center">'+b.qty+'</td>'+
+          '<td style="text-align:center">'+(podeExcluir?'<button type="button" onclick="_pedirExclusaoBip(\''+b._id+'\')" title="Excluir esta bipagem (senha do supervisor)" style="width:32px;height:32px;border-radius:8px;border:1.5px solid var(--gray2);background:#fff;font-size:15px;cursor:pointer">🗑</button>':'')+'</td>'+
         '</tr>';
       }).join('')+
     '</tbody></table>';
+  });
+}
+// ── Excluir a própria bipagem no celular, com senha de supervisor/admin ─────────────────
+// Apaga o doc (some da contagem/exportação) e guarda o registro em inv_inventarios.bipsExcluidas
+// (+ inv_auditlog quando permitido), pra ficar o rastro de endereço/coletor/quem autorizou.
+var _exclBipCtx=null;
+function _pedirExclusaoBip(id){
+  var bip=_bipsLocais.filter(function(b){ return b._id===id; })[0]; if(!bip||!_invColetaAtual) return;
+  var m=document.getElementById('modal-excl-bip'); if(m) m.remove();
+  var cat=_catCache[_invColetaAtual.inv.id]||null, prod=(cat&&_catItemDe(cat,bip.codigo||bip.ean))||{};
+  var cid=(S.currentUser&&S.currentUser.clienteId)||window.FC360_CLIENT_ID||'';
+  var sups=getUsers().filter(function(u){ return u.ativo!==false&&u.email&&u.email.indexOf('@')>0&&['admin','supervisor','gerencia'].indexOf(u.perfil)>=0&&(!u.clienteId||!cid||u.clienteId===cid); });
+  var quem = sups.length
+    ? '<select id="excl-bip-sup" style="width:100%;padding:12px;border:1.5px solid var(--gray2);border-radius:10px;font-size:15px;font-family:inherit;margin-bottom:8px">'+sups.map(function(u){ return '<option value="'+u.email+'">'+(u.nome||u.email)+'</option>'; }).join('')+'</select>'
+    : '<input id="excl-bip-sup" type="email" placeholder="E-mail do supervisor" autocomplete="off" style="width:100%;padding:12px;border:1.5px solid var(--gray2);border-radius:10px;font-size:15px;font-family:inherit;margin-bottom:8px"/>';
+  _exclBipCtx={bip:bip, desc:prod.desc||''};
+  var html='<div id="modal-excl-bip" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2300;display:flex;align-items:flex-end;justify-content:center">'+
+    '<div style="background:#fff;border-radius:20px 20px 0 0;padding:20px;width:100%;max-width:480px">'+
+    '<div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--r);margin-bottom:4px">Excluir bipagem #'+bip.seq+'</div>'+
+    '<div style="font-size:15px;font-weight:700;margin-bottom:12px"><span style="font-family:monospace">'+(bip.codigo||bip.ean)+'</span> · '+(prod.desc||'não cadastrado')+' — <b>'+bip.qty+' un</b></div>'+
+    '<label style="display:block;font-size:12px;font-weight:700;color:var(--t2);margin-bottom:4px">Supervisor que autoriza</label>'+quem+
+    '<input id="excl-bip-senha" type="password" placeholder="Senha do supervisor" autocomplete="current-password" style="width:100%;padding:12px;border:1.5px solid var(--gray2);border-radius:10px;font-size:15px;font-family:inherit;margin-bottom:8px"/>'+
+    '<input id="excl-bip-motivo" type="text" placeholder="Motivo (opcional)" autocomplete="off" style="width:100%;padding:12px;border:1.5px solid var(--gray2);border-radius:10px;font-size:14px;font-family:inherit;margin-bottom:12px"/>'+
+    '<div id="excl-bip-erro" style="color:var(--r);font-size:13px;font-weight:600;min-height:18px;margin-bottom:8px"></div>'+
+    '<div style="display:flex;gap:10px">'+
+      '<button type="button" onclick="_fecharExclusaoBip()" style="flex:1;padding:13px;background:#fff;border:1.5px solid var(--gray2);border-radius:10px;font-size:14px;font-weight:700;font-family:inherit">Cancelar</button>'+
+      '<button type="button" id="excl-bip-ok" onclick="_confirmarExclusaoBip()" style="flex:2;padding:13px;background:var(--r);color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;font-family:inherit">🗑 Excluir</button>'+
+    '</div></div></div>';
+  document.body.insertAdjacentHTML('beforeend',html);
+  setTimeout(function(){ var s=document.getElementById('excl-bip-senha'); if(s) s.focus(); },80);
+}
+function _fecharExclusaoBip(){ var m=document.getElementById('modal-excl-bip'); if(m) m.remove(); _exclBipCtx=null; }
+function _confirmarExclusaoBip(){
+  var c=_exclBipCtx; if(!c) return;
+  var email=(document.getElementById('excl-bip-sup')||{}).value||'', senha=(document.getElementById('excl-bip-senha')||{}).value||'', motivo=((document.getElementById('excl-bip-motivo')||{}).value||'').trim();
+  var erro=document.getElementById('excl-bip-erro'), ok=document.getElementById('excl-bip-ok');
+  email=email.trim().toLowerCase();
+  if(!email||!senha){ if(erro) erro.textContent='Informe o supervisor e a senha.'; return; }
+  if(ok){ ok.disabled=true; ok.textContent='Verificando...'; } if(erro) erro.textContent='';
+  // Valida a senha num Auth secundário: não mexe na sessão do coletor.
+  var aux=_getSecondaryAuth();
+  aux.signInWithEmailAndPassword(email,senha).then(function(){
+    aux.signOut().catch(function(){});
+    var bip=c.bip, inv=_invColetaAtual.inv;
+    var reg={bipId:bip._id, seq:bip.seq||0, ean:bip.ean||'', codigo:bip.codigo||'', desc:c.desc||'', qty:bip.qty||0, endereco:bip.endereco||'', setor:bip.setor||'',
+      coletorId:bip.coletorId||'', coletorNome:bip.coletorNome||'', autorizadoPor:email, motivo:motivo, excluidoEm:Date.now()};
+    return db.collection('inv_bipagens').doc(bip._id).delete().then(function(){
+      db.collection('inv_inventarios').doc(inv.id).update({bipsExcluidas:firebase.firestore.FieldValue.arrayUnion(reg)}).catch(function(e){ console.error('bipsExcluidas',e); });
+      db.collection('inv_auditlog').add({invId:inv.id, clienteId:inv.clienteId||'', acao:'bipagem_excluida', userName:(bip.coletorNome||bip.coletorId||'coletor')+' (aut. '+email+')',
+        detalhes:'End. '+reg.endereco+' · #'+reg.seq+' · '+(reg.codigo||reg.ean)+' '+reg.desc+' · '+reg.qty+' un'+(motivo?' · '+motivo:''), ts:firebase.firestore.FieldValue.serverTimestamp()}).catch(function(){});
+      _bipsLocais=_bipsLocais.filter(function(b){ return b._id!==bip._id; });
+      _renderUltimasBipagens(_bipsLocais.slice(0,20), inv.id);
+      _fecharExclusaoBip(); _bipSom('alerta');
+      showToast('Bipagem #'+reg.seq+' excluída (autorizada por '+email+').',4000);
+    });
+  }).catch(function(e){
+    var code=(e&&e.code)||'';
+    if(erro) erro.textContent = /wrong-password|invalid-credential|invalid-login|user-not-found|invalid-email/.test(code) ? 'Senha ou supervisor inválido.' : 'Falha: '+((e&&e.message)||code||e);
+    if(ok){ ok.disabled=false; ok.textContent='🗑 Excluir'; }
   });
 }
 
@@ -13483,7 +13550,7 @@ function renderTrilhaAuditoria(invId) {
         inventario_criado:'Inventário criado', coletor_adicionado:'Coletor adicionado',
         coletor_removido:'Coletor removido', modo_alterado:'Modo alterado',
         rodada_finalizada:'Rodada finalizada', divergencia_resolvida:'Divergência resolvida',
-        inventario_encerrado:'Inventário encerrado'
+        inventario_encerrado:'Inventário encerrado', bipagem_excluida:'Bipagem excluída (coletor)'
       };
       tbody.innerHTML=docs.map(function(r){
         var hora=r.ts?new Date(r.ts.seconds*1000).toLocaleString('pt-BR'):'—';
@@ -13665,7 +13732,7 @@ function removerColetorEnd(invId,end,userId) {
 function _liberarCampoEan(){ var ei=document.getElementById('inv-ean-input'); if(ei){ ei.disabled=false; ei.placeholder='Bipe ou digite o código...'; ei.focus(); } }
 function _carregarUltimasBipagens(invId,endereco,rodada,modo) {
   db.collection('inv_bipagens').where('invId','==',invId).where('endereco','==',endereco).get().then(function(snap){
-    var bips=snap.docs.map(function(d){ return d.data(); });
+    var bips=snap.docs.map(function(d){ var b=d.data(); b._id=d.id; return b; });
     if (modo==='auditoria'&&rodada) bips=bips.filter(function(b){ return (b.rodada||1)===rodada; });
     bips.sort(function(a,b){ return (b.seq||0)-(a.seq||0); });
     _nextSeq=(bips.length?bips[0].seq:0)+1;
@@ -15048,7 +15115,7 @@ function renderColeta() {
           '</div>'+
           '<button type="button" id="inv-cam-btn" onclick="_toggleCamFixa()" title="Ligar câmera (fica aberta pra ler em sequência)" style="padding:13px 16px;background:#fff;border:2px solid var(--gray2);border-radius:10px;font-size:18px;cursor:pointer">📷</button>'+
           '<div style="width:80px"><label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t2);display:block;margin-bottom:6px">Qtd</label>'+
-            '<input id="inv-qty-input" type="number" inputmode="numeric" value="1" min="1" style="width:100%;padding:13px 10px;border:2px solid var(--gray2);border-radius:10px;font-size:16px;text-align:center;font-family:inherit" onkeydown="return _qtyKeydown(event)" onfocus="_qtyFocado()" onblur="setTimeout(function(){ var a=document.activeElement; if(_kpAlvo!==\'ean\'&&(!a||(a.id!==\'inv-qty-input\'&&a.id!==\'inv-fator-input\'))) _descFixa(false); },80)"/></div>'+
+            '<input id="inv-qty-input" type="text" inputmode="decimal" autocomplete="off" value="1" style="width:100%;padding:13px 10px;border:2px solid var(--gray2);border-radius:10px;font-size:16px;text-align:center;font-family:inherit" onkeydown="return _qtyKeydown(event)" onfocus="_qtyFocado()" onblur="setTimeout(function(){ var a=document.activeElement; if(_kpAlvo!==\'ean\'&&(!a||(a.id!==\'inv-qty-input\'&&a.id!==\'inv-fator-input\'))) _descFixa(false); },80)"/></div>'+
           '<div id="inv-fator-wrap" style="width:62px;'+(palletOn?'':'display:none')+'">'+
             '<label style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;color:var(--t2);display:block;margin-bottom:6px">Qtd Emb</label>'+
             '<input id="inv-fator-input" type="number" value="1" min="1" style="width:100%;padding:13px 8px;border:2px solid var(--gray2);border-radius:10px;font-size:16px;text-align:center;font-family:inherit" onkeydown="if(event.key===\'Enter\')registrarBipagem()" onfocus="_descFixa(true,false)" onblur="setTimeout(function(){ var a=document.activeElement; if(_kpAlvo!==\'ean\'&&(!a||(a.id!==\'inv-qty-input\'&&a.id!==\'inv-fator-input\'))) _descFixa(false); },80)"/></div>'+
@@ -16021,7 +16088,7 @@ function _montarKeypadQty(){
     tecla('1')+tecla('2')+tecla('3')+tecla('⌫',cinza)+
     tecla('4')+tecla('5')+tecla('6')+tecla('C',cinza)+
     tecla('7')+tecla('8')+tecla('9')+'<button type="button" id="inv-kp-enter" onmousedown="event.preventDefault()" onclick="_kpQty(\'ENTER\')" style="'+base+'grid-row:span 2;height:auto;background:#1a73e8;color:#fff;font-size:26px">↵</button>'+
-    '<button type="button" onmousedown="event.preventDefault()" onclick="_descFixa(false)" title="Fechar" style="'+base+cinza+'font-size:18px">⌄</button>'+tecla('0')+'<span></span>'+
+    '<button type="button" onmousedown="event.preventDefault()" onclick="_descFixa(false)" title="Fechar" style="'+base+cinza+'font-size:18px">⌄</button>'+tecla('0')+tecla(',')+
   '</div>';
 }
 // Botão ⌨ do EAN: abre o teclado próprio apontando pro código de barras (digitar manual ou corrigir leitura).
@@ -16032,12 +16099,20 @@ function _teclarEan(){
   ei.dataset.limpo='1'; ei.focus();
   _descFixa(true,'ean');
 }
+// Quantidade decimal (produto de peso): aceita vírgula ou ponto, 3 casas, mínimo 0,001; vazio/inválido = 1.
+function _qtdNum(v){ var n=parseFloat(String(v==null?'':v).trim().replace(',','.')); if(!(n>0)) return 1; return Math.round(n*1000)/1000; }
+function _qtdFmt(n){ return String(_qtdNum(n)).replace('.',','); }
 // Primeiro toque depois de focar/selecionar substitui o valor (como digitar por cima do texto selecionado).
 function _kpQty(b){
   var alvo=document.getElementById(_kpAlvo==='ean'?'inv-ean-input':'inv-qty-input'); if(!alvo) return;
   if(b==='ENTER'){ if(_kpAlvo==='ean'){ _eanEnterKey(); } else { registrarBipagem(); } return; }
   if(b==='C'){ alvo.value=''; alvo.dataset.limpo='1'; }
   else if(b==='⌫'){ alvo.value=alvo.value.slice(0,-1); alvo.dataset.limpo='1'; }
+  else if(b===','){
+    if(_kpAlvo==='ean') return;
+    if(alvo.dataset.limpo!=='1'){ alvo.value='0'; alvo.dataset.limpo='1'; }
+    if(!/[,.]/.test(alvo.value)) alvo.value=(alvo.value||'0')+',';
+  }
   else {
     if(alvo.dataset.limpo!=='1'){ alvo.value=''; alvo.dataset.limpo='1'; }
     alvo.value = _kpAlvo==='ean' ? alvo.value+b : (alvo.value+b).replace(/^0+(?=\d)/,'');
@@ -16163,6 +16238,7 @@ var _bipsLocais = [];   // últimas bipagens do endereço atual (mais nova prime
 function _gravarBipagemLocal(bipData) {
   var ref = db.collection('inv_bipagens').doc();
   bipData.clienteId = bipData.clienteId || (S.currentUser && S.currentUser.clienteId) || '';
+  bipData._id = ref.id;
   bipData._pend = true;
   _offlinePending++; if(window._atualizarOfflineBanner) window._atualizarOfflineBanner();
   var p = ref.set(bipData).then(function(){
@@ -16184,9 +16260,8 @@ function registrarBipagem() {
   var ei=document.getElementById('inv-ean-input'), qi=document.getElementById('inv-qty-input');
   if (!ei||!qi) return;
   var fi=document.getElementById('inv-fator-input');
-  var lido=ei.value.trim(), qty=parseInt(qi.value)||1, fator=fi?Math.max(1,parseInt(fi.value)||1):1;
+  var lido=ei.value.trim(), qty=_qtdNum(qi.value), fator=fi?Math.max(1,parseInt(fi.value)||1):1;
   if (!lido){ ei.focus(); return; }
-  if (qty<1) qty=1;
   var coletorId=_getIdColetor();
   if (!coletorId){ _editarIdColetor(); return; }
   var inv=_invColetaAtual.inv;
@@ -16251,7 +16326,7 @@ function _dupAoLer(lido,res){
     var ei=document.getElementById('inv-ean-input');
     if(!ei||ei.value.trim()!==String(lido).trim()||_dupChecadoChave!==chave||_decisaoAberta()) return; // já registrou ou trocou de código
     var qi=document.getElementById('inv-qty-input'), fi=document.getElementById('inv-fator-input');
-    var qty=parseInt(qi&&qi.value)||1, fator=fi?Math.max(1,parseInt(fi.value)||1):1;
+    var qty=_qtdNum(qi&&qi.value), fator=fi?Math.max(1,parseInt(fi.value)||1):1;
     _abrirModalJaColetado(lido,res,qty*fator,fator,prev);
   });
 }
@@ -16259,7 +16334,7 @@ function _abrirModalJaColetado(lido,res,qtyTotal,fator,prev){
   var m=document.getElementById('modal-dup'); if(m) m.remove();
   _dupCtx={lido:lido,res:res,fator:fator,prev:prev}; _dupAbertoTs=Date.now();
   _bipSom('alerta');
-  var qtdTela=Math.max(1,Math.round(qtyTotal/(fator||1)));
+  var qtdTela=_qtdFmt(_qtdNum(qtyTotal/(fator||1)));
   var titulo=res?('<b style="font-family:monospace">'+res.codigo+'</b> · '+(res.desc||'')):('<b style="font-family:monospace">'+lido+'</b> · não cadastrado');
   var vis=prev.locais.slice(0,5), resto=prev.locais.length-vis.length;
   var lista=vis.map(function(l){ return '<div style="display:flex;justify-content:space-between;font-size:13px;padding:6px 0;border-bottom:1px solid var(--gray2)"><span>End. <b>'+l.endereco+'</b> <span style="color:var(--t3)">· '+l.coletor+'</span></span><b>'+l.qty+' un</b></div>'; }).join('')+(resto>0?'<div style="font-size:12px;color:var(--t3);padding:6px 0">mais '+resto+' local(is)</div>':'');
@@ -16270,7 +16345,7 @@ function _abrirModalJaColetado(lido,res,qtyTotal,fator,prev){
     '<div style="font-size:22px;font-weight:800;margin-bottom:8px">Já coletado: '+prev.total+' un <span style="font-size:12px;font-weight:600;color:var(--t3)">('+prev.linhas+' bipagem'+(prev.linhas===1?'':'s')+')</span></div>'+
     '<div style="max-height:160px;overflow:auto;margin-bottom:12px">'+lista+'</div>'+
     '<label style="display:block;font-size:12px;font-weight:700;color:var(--t2);margin-bottom:4px">Quantidade nova (será somada)</label>'+
-    '<input id="dup-qty-input" type="number" inputmode="numeric" min="1" value="'+qtdTela+'" onkeydown="return _dupQtyKeydown(event)" style="width:100%;padding:13px 10px;border:2px solid var(--y);border-radius:10px;font-size:22px;text-align:center;font-family:inherit;margin-bottom:12px"/>'+
+    '<input id="dup-qty-input" type="text" inputmode="decimal" autocomplete="off" value="'+qtdTela+'" onkeydown="return _dupQtyKeydown(event)" style="width:100%;padding:13px 10px;border:2px solid var(--y);border-radius:10px;font-size:22px;text-align:center;font-family:inherit;margin-bottom:12px"/>'+
     '<div style="display:flex;gap:10px">'+
       '<button onclick="_cancelarJaColetado()" style="flex:1;padding:13px;background:#fff;border:1.5px solid var(--gray2);border-radius:10px;font-size:14px;font-weight:700;font-family:inherit">Cancelar</button>'+
       '<button onclick="_somarJaColetado()" style="flex:2;padding:13px;background:var(--y);color:#111;border:none;border-radius:10px;font-size:15px;font-weight:700;font-family:inherit">+ Somar ao que já tem</button>'+
@@ -16289,10 +16364,10 @@ function _cancelarJaColetado(){
 }
 function _somarJaColetado(){
   var c=_dupCtx; if(!c) return;
-  var i=document.getElementById('dup-qty-input'); var nova=Math.max(1,parseInt(i&&i.value)||1);
+  var i=document.getElementById('dup-qty-input'); var nova=_qtdNum(i&&i.value);
   var m=document.getElementById('modal-dup'); if(m) m.remove(); _dupCtx=null;
   _registrarResolvido(c.lido, c.res, nova*(c.fator||1), c.fator||1, true);
-  showToast('Somado. Total agora: '+(c.prev.total+nova*(c.fator||1))+' un', 3500);
+  showToast('Somado. Total agora: '+_qtdFmt(c.prev.total+nova*(c.fator||1))+' un', 3500);
 }
 function _abrirPickerMultiplos(lista, lido) {
   var html='<div id="modal-multi" onclick="if(event.target===this)_cancelarMultiplo()" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:2300;display:flex;align-items:flex-end;justify-content:center">'+
@@ -16308,7 +16383,7 @@ function _cancelarMultiplo(){ var m=document.getElementById('modal-multi'); if(m
 function _escolherMultiplo(i) {
   var m=document.getElementById('modal-multi'); if(m) m.remove();
   var qi=document.getElementById('inv-qty-input'), fi=document.getElementById('inv-fator-input');
-  var qty=parseInt(qi&&qi.value)||1, fator=fi?Math.max(1,parseInt(fi.value)||1):1;
+  var qty=_qtdNum(qi&&qi.value), fator=fi?Math.max(1,parseInt(fi.value)||1):1;
   _registrarResolvido(window._multiLido, window._multiLista[i], qty*fator, fator);
 }
 
@@ -16544,9 +16619,8 @@ function _avulsaSelInv(invId) {
 function registrarBipagemAvulsa() {
   var ei=document.getElementById('avulsa-ean-input'), qi=document.getElementById('avulsa-qty-input');
   if (!ei||!qi) return;
-  var ean=ei.value.trim(), qty=parseInt(qi.value)||1;
+  var ean=ei.value.trim(), qty=_qtdNum(qi.value);
   if (!ean){ ei.focus(); return; }
-  if (qty<1) qty=1;
   var coletorId=_getIdColetor();
   if (!coletorId){ _editarIdColetor(); return; }
   if (!_avulsaInvId) return;
