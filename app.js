@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '427';
+var BUILD = '429';
 var ETIQUETAS_API_URL = 'https://hhk0a8gt2cn.sn.mynetname.net/etiquetas-api';
 (function() {
   var vEl = document.getElementById('sb-versao');
@@ -584,6 +584,83 @@ window.addEventListener('online',  atualizarStatusConexao);
 window.addEventListener('offline', atualizarStatusConexao);
 // Verifica na carga
 document.addEventListener('DOMContentLoaded', atualizarStatusConexao);
+
+// ── Avisos no login (BUILD 428, 29/10/26) ───────────────────────────────────
+// Tiago (29/10): "quero colocar avisos a partir de hoje, quando o pessoal das
+// lojas logarem, informando que a partir de 01/11 vamos ter perguntas pra ser
+// respondidas até as 11 horas (enviar foto do HOT e foto do AÇOUGUE); passando
+// disso a resposta não vai ser computada e não vai pontuar na loja".
+// Cada aviso tem janela de datas (inicio/fim inclusivos, AAAA-MM-DD), cliente
+// e perfis. Aparece depois do login como modal com "Entendi", 1× por dia por
+// aparelho (localStorage cahu360_avisoVisto_<id>). Além da lista fixa abaixo,
+// o doc clientes/<id> do Firestore pode ter um array `avisos` no mesmo
+// formato (campo `texto`, texto puro com quebras de linha) pra publicar um
+// aviso novo sem precisar de deploy.
+var AVISOS_LOGIN = [
+  {
+    id: 'fotos-hot-acougue-ate-11h',
+    clienteId: 'economico',
+    inicio: '2026-10-29',
+    fim: '2026-11-15',
+    perfis: ['gerencia', 'prevencao', 'supervisor', 'operator', 'admin'],
+    titulo: 'A partir de 01/11: fotos até as 11h',
+    html: '<p style="margin:0 0 12px">A partir do dia <b>01/11</b> o checklist vai ter perguntas que precisam ser respondidas <b>até as 11:00 da manhã</b>:</p>'
+      + '<div style="background:#fff8d6;border:1px solid #f0d860;border-radius:10px;padding:10px 12px;margin:0 0 12px;font-weight:700">'
+      + '<div>📸 Enviar foto do HORTIFRUTI (HOT)</div>'
+      + '<div style="margin-top:6px">📸 Enviar foto do AÇOUGUE</div></div>'
+      + '<p style="margin:0 0 8px">⏰ Depois das <b>11:00</b> a resposta <b>não é computada</b> e <b>não pontua</b> para a loja.</p>'
+      + '<p style="margin:0;color:#555">Programe a equipe para tirar e enviar as fotos logo no início do turno.</p>'
+  }
+];
+function _avisoDataISOLocal(d) {
+  var m = d.getMonth() + 1, dia = d.getDate();
+  return d.getFullYear() + '-' + (m < 10 ? '0' : '') + m + '-' + (dia < 10 ? '0' : '') + dia;
+}
+function _avisoEscape(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, function(c) {
+    return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];
+  });
+}
+function _avisosLoginPendentes() {
+  if (typeof S === 'undefined' || !S.currentUser) return [];
+  var hoje = _avisoDataISOLocal(new Date());
+  var deployId = (window.FC360_CLIENT_ID || '').trim();
+  var cliente = (deployId && deployId !== 'universal' ? deployId : '') || S.currentUser.clienteId || '';
+  var extra = (S.clienteConfig && Array.isArray(S.clienteConfig.avisos)) ? S.clienteConfig.avisos : [];
+  return AVISOS_LOGIN.concat(extra).filter(function(a) {
+    if (!a || !a.id || a.ativo === false) return false;
+    if (a.clienteId && a.clienteId !== cliente) return false;
+    if (a.perfis && a.perfis.length && a.perfis.indexOf(S.role) < 0) return false;
+    if (a.inicio && hoje < a.inicio) return false;
+    if (a.fim && hoje > a.fim) return false;
+    try { if (localStorage.getItem('cahu360_avisoVisto_' + a.id) === hoje) return false; } catch(e) {}
+    return true;
+  });
+}
+function mostrarAvisosLogin() {
+  if (document.getElementById('aviso-login-modal')) return;
+  var lista = _avisosLoginPendentes();
+  if (!lista.length) return;
+  var a = lista[0];
+  var corpo = a.html ? a.html : _avisoEscape(a.texto).replace(/\n/g, '<br>');
+  var m = document.createElement('div');
+  m.id = 'aviso-login-modal';
+  m.setAttribute('data-aviso-id', a.id);
+  m.style.cssText = 'position:fixed;inset:0;z-index:99997;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px';
+  m.innerHTML = '<div style="background:#fff;border-radius:16px;padding:20px;box-sizing:border-box;max-width:440px;width:100%;max-height:90vh;overflow-y:auto;font-family:inherit;box-shadow:0 20px 60px rgba(0,0,0,.3)">'
+    + '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px"><span style="font-size:28px">📢</span>'
+    + '<div style="font-size:16px;font-weight:800;color:#1a1a1a;line-height:1.2">' + _avisoEscape(a.titulo || 'Aviso') + '</div></div>'
+    + '<div style="font-size:14px;color:#333;line-height:1.5">' + corpo + '</div>'
+    + '<button onclick="fecharAvisoLogin()" style="width:100%;margin-top:16px;background:#1a7a4a;color:#fff;border:0;border-radius:10px;padding:12px;font-weight:700;font-size:14px;cursor:pointer">Entendi</button></div>';
+  document.body.appendChild(m);
+}
+function fecharAvisoLogin() {
+  var m = document.getElementById('aviso-login-modal');
+  if (!m) return;
+  try { localStorage.setItem('cahu360_avisoVisto_' + m.getAttribute('data-aviso-id'), _avisoDataISOLocal(new Date())); } catch(e) {}
+  m.remove();
+  mostrarAvisosLogin(); // próximo aviso pendente, se houver
+}
 
 // ── PWA: convite pra instalar o app (BUILD 427, 08/10/26) ──────────────────
 // Tiago: "não quero forçar, mais que apareça a msg — pra ele instalar e não
@@ -1898,6 +1975,7 @@ function finalizarLogin(found) {
   function iniciarApp() {
     limparContagensAntigas();
     mostrarConviteInstalar(); // BUILD 427: faixa "Instale o app" no celular aberto pelo navegador
+    mostrarAvisosLogin();     // BUILD 428: aviso do dia (ex.: fotos HOT/Açougue até as 11h a partir de 01/11)
     // Load inv and perdas for this user/day
     loadInvFromFirebase(function(){
       loadPerdasFromFirebase(function(){
@@ -2507,7 +2585,11 @@ function buildCLBlock(cl) {
     return !val;
   });
 
+  var _jaConcluidoBloco = jaConcluido;
   var items = cl.itens.map(function(item,i){
+    // Item com hora-limite vencida fica somente leitura (como checklist já enviado)
+    var _prazoFechado = !_jaConcluidoBloco && _prazoItemEncerrado(item);
+    var jaConcluido = _jaConcluidoBloco || _prazoFechado;
     var planoDoItem = _planoAbertoDoItem(cl.label, item.t);
     if (planoDoItem) {
       var statusLabel = {'aberto':'Em aberto','em-andamento':'Em andamento'}[planoDoItem.status] || planoDoItem.status;
@@ -2610,6 +2692,20 @@ function buildCLBlock(cl) {
             + '<div style="font-size:9px;color:var(--g);text-align:center;margin-top:2px">OK</div>'
             + '</div>';
         }
+      }
+    }
+    if (_prazoFechado && !_itemNoPrazo(cl.id, item, i)) fotoHtml = ''; // sem botão de foto depois do prazo
+    var _prazoHtml = '';
+    if (item.horaLimite) {
+      var _hrResp = S.checkState[cl.id+'_hrresp_'+i];
+      if (_prazoFechado && !(on && _itemNoPrazo(cl.id, item, i))) {
+        _prazoHtml = '<div style="display:flex;align-items:center;gap:6px;margin-top:8px;padding:7px 10px;background:var(--r2);border-radius:8px;border:1px solid #fac5c0">'
+          + '<span style="font-size:13px">⏰</span>'
+          + '<span style="font-size:11px;font-weight:700;color:var(--r)">Prazo encerrado às ' + item.horaLimite + ' — esta pergunta não pontua hoje</span></div>';
+      } else if (on && _hrResp && _itemNoPrazo(cl.id, item, i)) {
+        _prazoHtml = '<span style="font-size:10px;font-weight:700;color:var(--g);background:var(--g3);padding:1px 7px;border-radius:20px;border:1px solid var(--g2);white-space:nowrap">⏰ respondido ' + _hrResp + '</span>';
+      } else {
+        _prazoHtml = '<span style="font-size:10px;font-weight:800;color:#b45309;background:#fff8e1;padding:1px 7px;border-radius:20px;border:1px solid #f0c36d;white-space:nowrap">⏰ ATÉ ' + item.horaLimite + '</span>';
       }
     }
     var tipo = item.tipo || 'checkbox';
@@ -2784,8 +2880,10 @@ function buildCLBlock(cl) {
       + '<div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">'
       + '<div style="font-size:13px;font-weight:500;line-height:1.4;' + txtStyle + '">' + item.t + '</div>'
       + (item.critico ? '<span style="font-size:10px;font-weight:800;color:var(--r);background:var(--r2);padding:1px 7px;border-radius:20px;border:1px solid var(--r);white-space:nowrap">⚠️ CRÍTICO</span>' : '')
+      + (_prazoHtml.indexOf('<span') === 0 ? _prazoHtml : '')
       + '</div>'
       + (item.obs ? '<div style="font-size:11px;color:var(--t3);margin-top:3px">' + item.obs + '</div>' : '')
+      + (_prazoHtml.indexOf('<div') === 0 ? _prazoHtml : '')
       + belowHtml
       + '</div>'
       + fotoHtml
@@ -2854,12 +2952,58 @@ function switchCLTab(id) {
   });
 }
 
+// ── Hora-limite por pergunta (BUILD 429, 29/10/26) ──────────────────────────
+// Tiago (29/10): "a partir do dia 01/11 vamos ter perguntas pra ser respondidas
+// até as 11 horas, como enviar foto do HOT e foto do AÇOUGUE; passando isso a
+// resposta não vai ser computada e não vai pontuar na loja".
+// Item com `horaLimite` ('HH:MM', configurado no editor em "Responder até"):
+//  - toda resposta/foto grava a hora do aparelho em checkState[clId_hrresp_idx];
+//  - depois do horário (a partir do minuto seguinte, ex.: 11:01) o item trava:
+//    sem foto, sem resposta, e o card avisa que não pontua hoje;
+//  - no envio o item só conta como feito se a hora gravada <= horaLimite
+//    (snapshot ganha horaLimite, horaResposta e foraDoPrazo). O resto do
+//    checklist continua podendo ser enviado normalmente depois do horário.
+function _hhmmParaMin(s) {
+  var m = /^(\d{1,2}):(\d{2})$/.exec(String(s || '').trim());
+  return m ? parseInt(m[1], 10) * 60 + parseInt(m[2], 10) : null;
+}
+function _horaAgoraHHMM() {
+  var d = new Date();
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+function _prazoItemEncerrado(item) {
+  var lim = _hhmmParaMin(item && item.horaLimite);
+  if (lim === null) return false;
+  return _hhmmParaMin(_horaAgoraHHMM()) > lim;
+}
+// true = item sem limite, ou respondido até o horário (hora gravada pelo app)
+function _itemNoPrazo(clId, item, idx) {
+  var lim = _hhmmParaMin(item && item.horaLimite);
+  if (lim === null) return true;
+  var hr = _hhmmParaMin(S.checkState[clId + '_hrresp_' + idx]);
+  return hr !== null && hr <= lim;
+}
+function _registrarHoraResposta(clId, idx) {
+  S.checkState[clId + '_hrresp_' + idx] = _horaAgoraHHMM();
+}
+// Barra a resposta se o prazo do item já passou; true = pode responder
+function _podeResponderNoPrazo(cl, idx) {
+  var item = cl && cl.itens[idx];
+  if (!item || !_prazoItemEncerrado(item)) return true;
+  showToast('⏰ O prazo desta pergunta encerrou às ' + item.horaLimite + '. A resposta não pontua mais hoje.', 5000);
+  var b = document.getElementById('cl-block-' + cl.id);
+  if (b) b.innerHTML = buildCLBlock(cl);
+  return false;
+}
+
 function toggleCL(clId, idx) {
   if (jaEnviouHoje(clId)) return;
   var cl = getMyCLs().find(function(c){return c.id===clId;});
   if (!cl) return;
+  if (!_podeResponderNoPrazo(cl, idx)) return;
   var key = clId+'_'+cl.itens[idx].t;
   S.checkState[key] = !S.checkState[key];
+  _registrarHoraResposta(clId, idx);
   var on = S.checkState[key];
   var itemEl = document.getElementById('cli-'+clId+'-'+idx);
   var box = document.getElementById('chk-'+clId+'-'+idx);
@@ -2894,7 +3038,9 @@ function setSimNao(clId, idx, val) {
     }
     if (!temFoto) { showToast('📷 Envie a foto antes de responder.'); return; }
   }
+  if (!_podeResponderNoPrazo(cl, idx)) return;
   S.checkState[clId+'_'+cl.itens[idx].t] = val;
+  _registrarHoraResposta(clId, idx);
   saveCheckState();
   var block = document.getElementById('cl-block-'+clId);
   if (block) block.innerHTML = buildCLBlock(cl);
@@ -2906,7 +3052,9 @@ function setNota(clId, idx, val) {
   if (jaEnviouHoje(clId)) return;
   var cl = getMyCLs().find(function(c){return c.id===clId;});
   if (!cl) return;
+  if (!_podeResponderNoPrazo(cl, idx)) return;
   S.checkState[clId+'_'+cl.itens[idx].t] = val;
+  _registrarHoraResposta(clId, idx);
   saveCheckState();
   var block = document.getElementById('cl-block-'+clId);
   if (block) block.innerHTML = buildCLBlock(cl);
@@ -2918,7 +3066,9 @@ function saveTextoItem(clId, idx, val) {
   if (jaEnviouHoje(clId)) return;
   var cl = getMyCLs().find(function(c){return c.id===clId;});
   if (!cl) return;
+  if (!_podeResponderNoPrazo(cl, idx)) return;
   S.checkState[clId+'_'+cl.itens[idx].t] = val.trim() || false;
+  _registrarHoraResposta(clId, idx);
   saveCheckState();
   updateCLProg(cl);
   updateDash();
@@ -2935,6 +3085,8 @@ function salvarFoto(clId, idx, input) {
 
 function salvarFotoTipo(clId, idx, tipo, input) {
   if (!input.files || !input.files[0]) return;
+  var _clPrazoF = getMyCLs().find(function(cc){return cc.id===clId;});
+  if (_clPrazoF && !_podeResponderNoPrazo(_clPrazoF, idx)) { input.value = ''; return; }
 
   // Comprimir imagem antes de salvar
   var img = new Image();
@@ -2953,6 +3105,7 @@ function salvarFotoTipo(clId, idx, tipo, input) {
 
     var fotoKey = clId+'_foto_'+tipo+'_'+idx;
     S.checkState[fotoKey] = base64;
+    _registrarHoraResposta(clId, idx);
 
     // Backup local da foto (evita perda se Firebase demorar ou conexão cair)
     try {
@@ -3011,6 +3164,7 @@ function salvarFotoMulti(clId, idx, input) {
   if (!input.files || !input.files[0]) return;
   var cl = getMyCLs().find(function(c){return c.id===clId;});
   if (!cl || !cl.itens[idx]) return;
+  if (!_podeResponderNoPrazo(cl, idx)) { input.value = ''; return; }
   var fotoQtd = cl.itens[idx].fotoQtd || 2;
   var slot = -1;
   for (var fi = 0; fi < fotoQtd; fi++) {
@@ -3030,6 +3184,7 @@ function salvarFotoMulti(clId, idx, input) {
     URL.revokeObjectURL(objectUrl); img.src = '';
     var fotoKey = clId+'_foto_multi_'+idx+'_'+slot;
     S.checkState[fotoKey] = base64;
+    _registrarHoraResposta(clId, idx);
     try {
       var hojM = getLocalDate();
       localStorage.setItem('eco_foto_bk_'+fotoKey, base64);
@@ -3393,6 +3548,8 @@ function togglePlanilhaRow(sel) {
   var isSimNao = sel.value === 'simNao';
   row.style.display = isPlanilha ? 'block' : 'none';
   if (fotoSel) fotoSel.style.display = isPlanilha ? 'none' : '';
+  var hlWrap = document.getElementById('ncl-item-hora-limite-wrap');
+  if (hlWrap) hlWrap.style.display = isPlanilha ? 'none' : 'flex';
   if (prazoRow) prazoRow.style.display = isSimNao ? 'block' : 'none';
   if (isPlanilha) {
     var modoInputs = document.querySelectorAll('input[name="ncl-planilha-modo"]');
@@ -3743,6 +3900,7 @@ function enviarCL(clId, label) {
   var feitos = cl.itens.filter(function(i,idx){
     if (_planoAbertoDoItem(label, i.t)) return false;
     if (!S.checkState[clId+'_'+i.t]) return false;
+    if (!_itemNoPrazo(clId, i, idx)) return false; // BUILD 429: respondido depois da hora-limite não conta
     var ef = (i.foto && i.foto !== 'none') ? i.foto : 'none';
     if (ef === 'none') return true;
     if (ef === 'multiplas') { var qt=i.fotoQtd||2,ct=0; for(var f=0;f<qt;f++){if(S.checkState[clId+'_foto_multi_'+idx+'_'+f])ct++;} return ct>=qt; }
@@ -3768,6 +3926,7 @@ function enviarCL(clId, label) {
     if (_efF === 'none') return;
     var respondeu = !!S.checkState[clId+'_'+item.t];
     if (!respondeu) return; // não respondeu ainda, não conta como pendente de foto
+    if (_prazoItemEncerrado(item)) return; // prazo passou: não dá mais pra enviar a foto, não pode travar o envio
     if (_efF === 'multiplas') {
       var _qtdEV = item.fotoQtd || 2; var _tEV = 0;
       for (var _fEV = 0; _fEV < _qtdEV; _fEV++) { if (S.checkState[clId+'_foto_multi_'+idx+'_'+_fEV]) _tEV++; }
@@ -3872,8 +4031,12 @@ function confirmarEnviar(assinatura) {
       fotoAntes:S.checkState[clId+'_foto_antes_'+idx]||null,
       fotoDepois:S.checkState[clId+'_foto_depois_'+idx]||S.checkState[clId+'_foto_'+idx]||null,
       fotosMulti:fotosMultiSnap,
+      horaLimite: item.horaLimite || null,
+      horaResposta: item.horaLimite ? (S.checkState[clId+'_hrresp_'+idx] || null) : null,
+      foraDoPrazo: !!(item.horaLimite && !_itemNoPrazo(clId, item, idx)),
       feito:(function(){
         if (!val) return false;
+        if (!_itemNoPrazo(clId, item, idx)) return false; // BUILD 429: não pontua fora do horário
         if (!item.foto || item.foto==='none') return true;
         if (item.foto==='multiplas'){var _qtdF=item.fotoQtd||2;var _tF=0;for(var _fF=0;_fF<_qtdF;_fF++){if(S.checkState[clId+'_foto_multi_'+idx+'_'+_fF])_tF++;}return _tF>=_qtdF;}
         var temDepois=!!(S.checkState[clId+'_foto_depois_'+idx]||S.checkState[clId+'_foto_'+idx]);
@@ -4080,6 +4243,8 @@ function _resetItemForm() {
   if (criticoEl) criticoEl.checked = false;
   var prazoEl = document.getElementById('ncl-item-prazo-plano');
   if (prazoEl) prazoEl.value = '72';
+  var hlItemEl = document.getElementById('ncl-item-hora-limite');
+  if (hlItemEl) hlItemEl.value = '';
   _editingItemIdx = null;
   var btn = document.getElementById('ncl-add-btn');
   if (btn) btn.textContent = '+ Adicionar';
@@ -4093,6 +4258,8 @@ function addItemNCL() {
   var fotoVal = document.getElementById('ncl-item-foto').value;
   var tipo = (document.getElementById('ncl-item-tipo')||{value:'checkbox'}).value || 'checkbox';
   var criticoEl = document.getElementById('ncl-item-critico');
+  var _hlItemEl = document.getElementById('ncl-item-hora-limite');
+  var horaLimiteItem = (_hlItemEl && _hhmmParaMin(_hlItemEl.value) !== null) ? _hlItemEl.value : '';
   if (!txt) return;
 
   // Modo edição de item existente
@@ -4103,6 +4270,7 @@ function addItemNCL() {
     var prazoPlanoEl = document.getElementById('ncl-item-prazo-plano');
     var prazoPlano = (tipo === 'simNao' && prazoPlanoEl) ? parseInt(prazoPlanoEl.value || '72') : 72;
     var updated = { t: txt, obs: obs, foto: foto, tipo: tipo, critico: critico, prazoPlano: prazoPlano };
+    if (horaLimiteItem && tipo !== 'planilha') updated.horaLimite = horaLimiteItem;
     if (fotoVal === 'multiplas') {
       var qtdEl0 = document.getElementById('ncl-foto-qtd');
       updated.fotoQtd = Math.max(1, Math.min(10, parseInt((qtdEl0 && qtdEl0.value) || '2')));
@@ -4148,6 +4316,7 @@ function addItemNCL() {
     var prazoPlanoEl = document.getElementById('ncl-item-prazo-plano');
     var prazoPlano = (tipo === 'simNao' && prazoPlanoEl) ? parseInt(prazoPlanoEl.value || '72') : 72;
     var novoItem = { t: txt, obs: obs, foto: foto, tipo: tipo, critico: critico, prazoPlano: prazoPlano };
+    if (horaLimiteItem) novoItem.horaLimite = horaLimiteItem;
     if (fotoVal === 'multiplas') {
       var qtdElN = document.getElementById('ncl-foto-qtd');
       novoItem.fotoQtd = Math.max(1, Math.min(10, parseInt((qtdElN && qtdElN.value) || '2')));
@@ -4175,6 +4344,8 @@ function editItemNCL(idx) {
   if (criticoEl) criticoEl.checked = !!item.critico;
   var prazoEl = document.getElementById('ncl-item-prazo-plano');
   if (prazoEl) prazoEl.value = item.prazoPlano || 72;
+  var hlEditEl = document.getElementById('ncl-item-hora-limite');
+  if (hlEditEl) hlEditEl.value = item.horaLimite || '';
   var btn = document.getElementById('ncl-add-btn');
   if (btn) btn.textContent = '✔ Salvar';
   var cancel = document.getElementById('ncl-edit-cancel');
@@ -4209,6 +4380,7 @@ function renderNclItens() {
       +(item.tipo && item.tipo!=='checkbox' ? '<div style="font-size:11px;color:var(--bl);margin-top:2px">'+({simNao:'✅ Sim/Não',nota:'⭐ Nota 1–5',texto:'📝 Texto',planilha:'📊 Planilha de Contagem'}[item.tipo]||'')+(item.tipo==='planilha'&&item.lojas?' ('+Object.keys(item.lojas).join(', ')+')':item.tipo==='planilha'&&item.produtos?' ('+item.produtos.length+' produtos)':'')+'</div>' : '')
       +(item.foto && item.foto!=='none' ? '<div style="font-size:11px;color:var(--g);margin-top:2px">'+(item.foto==='antes_depois'?'📷📷 Foto antes e depois':item.foto==='multiplas'?'📷×'+(item.fotoQtd||2)+' Múltiplas fotos':'📷 Foto')+'</div>' : '')
       +(item.critico ? '<div style="font-size:11px;font-weight:700;color:var(--r);margin-top:2px">⚠️ Item Crítico — reprova a inspeção inteira</div>' : '')
+      +(item.horaLimite ? '<div style="font-size:11px;font-weight:700;color:#b45309;margin-top:2px">⏰ Responder até '+item.horaLimite+' — depois não pontua</div>' : '')
       +'</div>'
       +(isEditing ? '' : '<button onclick="editItemNCL('+i+')" title="Editar item" style="background:none;border:none;color:var(--bl);cursor:pointer;font-size:15px;line-height:1;flex-shrink:0;padding:0 2px">✏</button>')
       +'<button onclick="removeItemNCL('+i+')" style="background:none;border:none;color:var(--r);cursor:pointer;font-size:16px;line-height:1;flex-shrink:0">✕</button>'
@@ -4623,6 +4795,7 @@ function _renderDetalhe(r) {
             +'<div style="font-size:13px;font-weight:600;'+txtS+'">'+item.texto
             +respostaHtml
             +(item.critico?'<span style="font-size:10px;font-weight:800;color:var(--r);background:var(--r2);padding:1px 6px;border-radius:20px;border:1px solid var(--r);margin-left:6px">⚠ CRÍTICO</span>':'')
+            +(item.horaLimite?(item.foraDoPrazo?'<span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:20px;margin-left:6px;color:#c0392b;background:#fdecea;border:1px solid #e74c3c">⏰ fora do prazo ('+item.horaLimite+') — não pontuou</span>':'<span style="font-size:10px;font-weight:700;padding:1px 6px;border-radius:20px;margin-left:6px;color:#1a7a4a;background:#e8f5ee;border:1px solid #a8d5b5">⏰ '+(item.horaResposta||'')+' (até '+item.horaLimite+')</span>'):'')
             +'</div>'
             +(item.obs?'<div style="font-size:11px;color:var(--t3);margin-top:2px">'+item.obs+'</div>':'')
             +(item.justificativa?'<div style="margin-top:6px;padding:6px 10px;background:var(--r2);border-radius:6px;font-size:12px;color:var(--r)">📋 '+item.justificativa+'</div>':'')
@@ -4711,7 +4884,7 @@ function exportarDetalhePDF() {
     return '<tr style="background:'+bg+';border-bottom:1px solid #eee">'
       +'<td style="width:28px;text-align:center;font-size:14px;padding:8px 4px">'+icon+'</td>'
       +'<td style="padding:8px 10px">'
-        +'<div style="font-size:11.5px;font-weight:600;color:#111">'+item.texto+critico+respTxt+'</div>'
+        +'<div style="font-size:11.5px;font-weight:600;color:#111">'+item.texto+critico+respTxt+(item.horaLimite?(item.foraDoPrazo?'<span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:10px;margin-left:4px;color:#c0392b;background:#fdecea;border:1px solid #e74c3c">⏰ fora do prazo ('+item.horaLimite+') — não pontuou</span>':'<span style="font-size:9px;font-weight:700;padding:1px 5px;border-radius:10px;margin-left:4px;color:#1a7a4a;background:#e8f5ee;border:1px solid #a8d5b5">⏰ '+(item.horaResposta||'')+' (até '+item.horaLimite+')</span>'):'')+'</div>'
         +obs+just
         +(fotosHtml?'<div>'+fotosHtml+'</div>':'')
       +'</td></tr>';
