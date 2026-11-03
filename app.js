@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '432';
+var BUILD = '435';
 var ETIQUETAS_API_URL = 'https://hhk0a8gt2cn.sn.mynetname.net/etiquetas-api';
 (function() {
   var vEl = document.getElementById('sb-versao');
@@ -1206,8 +1206,15 @@ var RES_JANELA_DIAS = 7;   // Tiago (23/09/26): 1 semana no celular; o resto vem
 var _resCarregadoDesde = null;   // ISO do primeiro dia já carregado (janela ou mais antigo)
 var _resAntigos = [];            // docs anteriores à janela, buscados sob demanda (já enxugados)
 
+// BUILD 433 (03/11/26: Firestore estourou a cota grátis de 50 mil leituras/dia).
+// Loja (operador/prevenção/gerência) só baixa os envios de HOJE no login —
+// Tiago (03/11): "gerência também pode baixar só os envios de hoje" (hoje quem
+// usa são só os gerentes). Os 7 dias do Dashboard vêm 1x por sessão quando ele
+// abre (loadResultadosFromFirebase); o resto, sob demanda (garantirResultadosDesde).
+// Admin/supervisor seguem com 7 dias.
 function _resJanelaInicio() {
-  return ResultadosCore.janelaISO(RES_JANELA_DIAS);
+  var soHoje = S && (S.role === 'operator' || S.role === 'prevencao' || S.role === 'gerencia');
+  return ResultadosCore.janelaISO(soHoje ? 0 : RES_JANELA_DIAS);
 }
 
 function _resAplicarLista(docsData, desdeISO) {
@@ -1253,6 +1260,8 @@ function garantirResultadosDesde(deISO, cb) {
 }
 
 function loadResultadosFromFirebase(callback) {
+  // Listener ativo = cache ao vivo; só falta (1x por sessão) o passado dos 7 dias do Dashboard
+  if (_resultadosUnsub) { garantirResultadosDesde(ResultadosCore.janelaISO(RES_JANELA_DIAS), callback); return; }
   var doFetch = function() {
     var desde = _resJanelaInicio();
     if (!_resCarregadoDesde || _resCarregadoDesde > desde) _resCarregadoDesde = desde;
@@ -1373,8 +1382,13 @@ function _pedirPermissaoNotificacao() {
   }
 }
 
-function iniciarResultadosRealtime() {
-  if (_resultadosUnsub) _resultadosUnsub();
+// BUILD 433: antes o login fazia get() da janela E abria este listener (que relê
+// tudo no 1º snapshot) — e Dashboard/Checklist faziam outro get() a cada abertura.
+// Agora o listener é a única leitura da janela; quem precisa esperar os dados
+// passa `aoCarregar`, chamado uma vez no 1º snapshot (ou no erro).
+function iniciarResultadosRealtime(aoCarregar) {
+  if (_resultadosUnsub) { if (aoCarregar) aoCarregar(); return; }
+  var _aoCarregar = aoCarregar || null;
   _firstResultSnapshot = true;
   var desde = _resJanelaInicio();
   if (!_resCarregadoDesde || _resCarregadoDesde > desde) _resCarregadoDesde = desde;
@@ -1417,8 +1431,11 @@ function iniciarResultadosRealtime() {
       var rankEl = document.getElementById('rel-cl-ranking');
       if (rankEl && rankEl.style.display !== 'none') renderRelRanking();
     }
+    if (_aoCarregar) { var cb = _aoCarregar; _aoCarregar = null; cb(); }
   }, function(err) {
     console.warn('Falha no listener de resultados:', err);
+    _resultadosUnsub = null;
+    if (_aoCarregar) { var cb = _aoCarregar; _aoCarregar = null; cb(); }
   });
 }
 
@@ -2244,11 +2261,8 @@ function finalizarLogin(found) {
       });
       S.customCLsCache = list;
     }),
-    // Só a janela de 30 dias (spec 2026-09-23) — antes baixava a coleção inteira no login.
-    db.collection('resultados').where('dateISO', '>=', _resJanelaInicio()).get().then(function(snap){
-      if (!_resCarregadoDesde || _resCarregadoDesde > _resJanelaInicio()) _resCarregadoDesde = _resJanelaInicio();
-      _resAplicarLista(ResultadosCore.filtrarConfirmados(snap.docs).map(function(d){ return d.data(); }));
-    }),
+    // BUILD 433: a janela vem do 1º snapshot do listener (antes: get() + listener = 2x as leituras)
+    new Promise(function(res){ iniciarResultadosRealtime(res); }),
     (function(){
       var userId = found.id;
       var hoje = getLocalDate();
@@ -2639,11 +2653,8 @@ function sincronizarEstadoFirebase() {
       Object.assign(S.checkState || {}, fotosEmMemoria);
     });
 
-  // Só a janela de 30 dias (spec 2026-09-23) — antes baixava a coleção inteira no login.
-  var promiseResultados = db.collection('resultados').where('dateISO', '>=', _resJanelaInicio()).get().then(function(snap){
-    if (!_resCarregadoDesde || _resCarregadoDesde > _resJanelaInicio()) _resCarregadoDesde = _resJanelaInicio();
-    _resAplicarLista(ResultadosCore.filtrarConfirmados(snap.docs).map(function(d){ return d.data(); }));
-  }).catch(function(){});
+  // BUILD 433: o listener de resultados já mantém o cache ao vivo — sem nova leitura
+  var promiseResultados = new Promise(function(res){ iniciarResultadosRealtime(res); });
 
   Promise.all([promiseState, promiseResultados]).then(function(){
     // Recarregar fotos do Firebase após sync (garante que fotos salvas estejam presentes)
@@ -4177,7 +4188,62 @@ function enviarCL(clId, label) {
   var fill = document.getElementById('env-bar-fill');
   fill.style.width = pct+'%';
   fill.style.background = pct===100 ? 'var(--g2)' : pct>=50 ? 'var(--am)' : 'var(--r)';
+  _montarAvisoFaltando(cl, clId, label);
   document.getElementById('modal-enviar').style.display = 'flex';
+}
+
+// Tiago (03/11): a loja tira as fotos com "Responder até 11:00" de manhã e
+// responde o resto até o fim do dia. Se apertar Enviar antes de terminar, o
+// checklist fecha (1 envio por dia) e o resto não pode mais ser respondido.
+// O modal lista o que ainda dá pra responder e deixa "Voltar e responder"
+// como botão principal; "Enviar assim mesmo" segue o fluxo normal.
+function _itemFeitoParaEnvio(clId, label, item, idx) {
+  if (_planoAbertoDoItem(label, item.t)) return true; // fora da conta
+  if (!S.checkState[clId+'_'+item.t]) return false;
+  var ef = (item.foto && item.foto !== 'none') ? item.foto : 'none';
+  if (ef === 'none') return true;
+  if (ef === 'multiplas') { var qt=item.fotoQtd||2,ct=0; for(var f=0;f<qt;f++){if(S.checkState[clId+'_foto_multi_'+idx+'_'+f])ct++;} return ct>=qt; }
+  var td=!!(S.checkState[clId+'_foto_depois_'+idx]||S.checkState[clId+'_foto_'+idx]);
+  if (ef === 'antes_depois') return !!(S.checkState[clId+'_foto_antes_'+idx])&&td;
+  return td;
+}
+function _montarAvisoFaltando(cl, clId, label) {
+  var box = document.getElementById('env-faltando');
+  var conf = document.getElementById('env-confirma');
+  var bEnv = document.getElementById('env-btn-enviar');
+  var bCan = document.getElementById('env-btn-cancelar');
+  if (!box || !conf || !bEnv || !bCan) return;
+  var abertas = [], vencidas = [];
+  cl.itens.forEach(function(item, idx){
+    if (_itemFeitoParaEnvio(clId, label, item, idx)) return;
+    if (_prazoItemEncerrado(item)) vencidas.push(item.t); else abertas.push(item.t);
+  });
+  var esc = function(s){ return String(s||'').replace(/[&<>"]/g, function(c){ return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]; }); };
+  if (!abertas.length) {
+    box.style.display = 'none'; box.innerHTML = '';
+    conf.textContent = 'Deseja confirmar o envio para a central?';
+    bEnv.textContent = '✍ Assinar e Enviar';
+    bEnv.className = 'btn btn-p';
+    bCan.textContent = 'Cancelar';
+    bCan.className = 'btn btn-s';
+    return;
+  }
+  var max = 8;
+  var lista = abertas.slice(0, max).map(function(t){
+    return '<div style="font-size:12.5px;color:var(--t);padding:5px 0;border-bottom:1px solid #f3dcb0">• '+esc(t)+'</div>';
+  }).join('') + (abertas.length > max ? '<div style="font-size:12px;color:var(--t3);padding-top:5px">+ '+(abertas.length-max)+' pergunta(s)</div>' : '');
+  box.innerHTML = '<div style="background:#fff8e1;border:1px solid #f0c36d;border-radius:10px;padding:12px 14px;text-align:left">'
+    + '<div style="font-size:13.5px;font-weight:800;color:#b45309;margin-bottom:6px">Ainda faltam '+abertas.length+' pergunta'+(abertas.length>1?'s':'')+' para responder</div>'
+    + '<div style="max-height:170px;overflow:auto">'+lista+'</div>'
+    + '<div style="font-size:12px;font-weight:700;color:var(--r);margin-top:8px">Depois de enviar, o checklist fecha e o restante não poderá mais ser respondido hoje.</div>'
+    + (vencidas.length ? '<div style="font-size:11.5px;color:var(--t3);margin-top:6px">'+vencidas.length+' pergunta'+(vencidas.length>1?'s':'')+' com prazo encerrado (não pontua'+(vencidas.length>1?'m':'')+' hoje).</div>' : '')
+    + '</div>';
+  box.style.display = 'block';
+  conf.textContent = 'Deseja voltar e responder as outras perguntas, ou enviar o checklist faltando responder?';
+  bCan.textContent = '← Voltar e responder';
+  bCan.className = 'btn btn-p';
+  bEnv.textContent = 'Enviar assim mesmo';
+  bEnv.className = 'btn btn-s';
 }
 
 function confirmarEnviar(assinatura) {
