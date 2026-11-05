@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '435';
+var BUILD = '437';
 var ETIQUETAS_API_URL = 'https://hhk0a8gt2cn.sn.mynetname.net/etiquetas-api';
 (function() {
   var vEl = document.getElementById('sb-versao');
@@ -82,16 +82,13 @@ db.enablePersistence({synchronizeTabs: true}).catch(function(err){
   // Libera espaço de emergência: os backups de foto (eco_foto_bk_*) são só
   // cópia de segurança pra reenvio, não dado principal — podem ser apagados
   // sem perder nada que já tenha sido confirmado no servidor.
+  // BUILD 436: NUNCA apaga os backups de HOJE — são as fotos que a loja tirou
+  // de manhã e ainda vai enviar à tarde (Tiago, 04/11: "tirou foto e depois
+  // sumiu"). Só os de outros dias, que já não servem pra nada.
   function _liberarEspacoEmergencia() {
-    try {
-      var chaves = [];
-      for (var i = 0; i < localStorage.length; i++) {
-        var k = localStorage.key(i);
-        if (k && k.indexOf('eco_foto_bk_') === 0) chaves.push(k);
-      }
-      chaves.forEach(function(k){ try { localStorage.removeItem(k); } catch(e){} });
-      return chaves.length > 0;
-    } catch(e) { return false; }
+    var d = new Date();
+    var hoje = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    return _limparBackupsFotoOutrosDias(hoje);
   }
 
   // Teste 1: localStorage
@@ -987,8 +984,47 @@ function loadCheckStateFromFirebase(callback) {
   });
 }
 
+// BUILD 436: backup local da foto (a loja tira de manhã e envia à tarde — tem
+// que sobreviver ao app fechar, sem internet). O localStorage do Android tem
+// ~5 MB: antes de gravar, apaga os backups de outros dias; se mesmo assim não
+// couber, avisa que a foto ficou só na memória e no servidor.
+function _limparBackupsFotoOutrosDias(hoje) {
+  var apagou = false;
+  try {
+    Object.keys(localStorage).forEach(function(lk) {
+      if (lk.indexOf('eco_foto_bk_keys_') === 0 && lk !== 'eco_foto_bk_keys_' + hoje) {
+        try { JSON.parse(localStorage.getItem(lk) || '[]').forEach(function(ok){ localStorage.removeItem('eco_foto_bk_' + ok); }); } catch(e) {}
+        localStorage.removeItem(lk);
+        apagou = true;
+      }
+    });
+  } catch(e) {}
+  return apagou;
+}
+var _avisouBackupCheio = false;
+function _guardarBackupFoto(fotoKey, base64) {
+  var hoje = getLocalDate();
+  _limparBackupsFotoOutrosDias(hoje);
+  try {
+    localStorage.setItem('eco_foto_bk_' + fotoKey, base64);
+    var bk = JSON.parse(localStorage.getItem('eco_foto_bk_keys_' + hoje) || '[]');
+    if (bk.indexOf(fotoKey) < 0) { bk.push(fotoKey); localStorage.setItem('eco_foto_bk_keys_' + hoje, JSON.stringify(bk)); }
+    return true;
+  } catch(e) {
+    if (!_avisouBackupCheio) {
+      _avisouBackupCheio = true;
+      showToast('⚠️ Memória do navegador cheia: a foto foi guardada só no servidor. Mantenha o app aberto com internet até enviar.', 7000);
+    }
+    return false;
+  }
+}
+
+// BUILD 436: `fotos` era lida no servidor 2-3x por abertura (login + cada troca
+// pra aba Executar). Agora: backup local primeiro; servidor no máximo 1x a cada
+// 5 min; sem servidor (cota estourada / sem internet) usa o cache do Firestore,
+// que guarda o que este aparelho já gravou hoje.
+var _fotosServidorEm = 0;
 function carregarFotosFirebase(callback) {
-  // Primeiro restaura backups do localStorage (disponível offline)
   var hoje3 = getLocalDate();
   try {
     var bkKeys = JSON.parse(localStorage.getItem('eco_foto_bk_keys_'+hoje3) || '[]');
@@ -999,18 +1035,22 @@ function carregarFotosFirebase(callback) {
   } catch(e) {}
 
   var userId = S.currentUser ? S.currentUser.id : 'guest';
-  var today = getLocalDate();
-  db.collection('fotos').where('userId','==',userId).where('date','==',today).get()
-    .then(function(snap){
-      snap.docs.forEach(function(doc){
-        var d = doc.data();
-        if (d.base64) {
-          var key = d.clId + '_foto_' + d.tipo + '_' + d.idx;
-          S.checkState[key] = d.base64;
-        }
-      });
-      if (callback) callback();
-    }).catch(function(){ if (callback) callback(); });
+  var q = db.collection('fotos').where('userId','==',userId).where('date','==',hoje3);
+  var aplicar = function(snap){
+    snap.docs.forEach(function(doc){
+      var d = doc.data();
+      if (d.base64) S.checkState[d.clId + '_foto_' + d.tipo + '_' + d.idx] = d.base64;
+    });
+  };
+  var doCache = function(){
+    q.get({source:'cache'}).then(aplicar).catch(function(){}).then(function(){ if (callback) callback(); });
+  };
+  if (Date.now() - _fotosServidorEm < 5 * 60 * 1000) { doCache(); return; }
+  q.get().then(function(snap){
+    _fotosServidorEm = Date.now();
+    aplicar(snap);
+    if (callback) callback();
+  }).catch(doCache);
 }
 var CLKEY = 'eco_cl_custom';
 var RESKEY = 'eco_resultados';
@@ -1823,8 +1863,12 @@ function ativarToken(fromModal) {
     var doc = snap.docs[0]; var t = doc.data();
     if (t.usado) { if (errEl) errEl.textContent = 'Token já foi utilizado.'; return; }
     if (t.cancelado) { if (errEl) errEl.textContent = 'Token cancelado pelo administrador.'; return; }
+    // BUILD 437: renovar ANTES de vencer soma à validade atual (antes era hoje + dias)
     var hoje2 = new Date(); hoje2.setHours(0,0,0,0);
-    var dataFim = new Date(hoje2); dataFim.setDate(dataFim.getDate() + (t.dias||30));
+    var baseAtual = S.clienteConfig && S.clienteConfig.validade ? new Date(S.clienteConfig.validade) : null;
+    var dataFim = baseAtual && baseAtual > hoje2 ? new Date(baseAtual) : new Date(hoje2);
+    dataFim.setHours(0,0,0,0);
+    dataFim.setDate(dataFim.getDate() + (t.dias||30));
     var dataFimStr = dataFim.toISOString().slice(0,10);
     var batch = db.batch();
     batch.update(doc.ref, { usado: true, ativadoEm: firebase.firestore.FieldValue.serverTimestamp(), dataFim: dataFimStr, usadoPor: S.currentUser.id });
@@ -2168,11 +2212,10 @@ function finalizarLogin(found) {
       buildCLTabs();
       renderAlertaPlanos();
     });
-    // limparPlanosAntigos() continua reusando ESTE load de planos (não um
-    // fetch próprio) pra nunca decidir o que limpar em cima de cache local
-    // desatualizado (ver comentário na função) — só isso ainda espera o load.
+    // BUILD 436: no login só os planos abertos; limparPlanosAntigos() roda
+    // dentro do load completo (página Plano de Ação / Central), nunca em cima
+    // de cache local desatualizado (ver comentário na função).
     loadPlanosFromFirebase(function() {
-      limparPlanosAntigos();
       renderAlertaPlanos();
     });
     var hoje = new Date();
@@ -2562,7 +2605,7 @@ function nav(page, el) {
       renderPlanos(planoFiltroAtual||'aberto');
       atualizarBadgePlano();
       initFotoObrigToggle();
-    });
+    }, true);
   }
   if (page==='inv') {
     // Captura ANTES do async para não perder o estado em corrida
@@ -2632,13 +2675,14 @@ function sincronizarEstadoFirebase() {
   var promiseState = db.collection('checkstates').doc(userId+'_'+hoje).get()
     .then(function(doc){
       var localState = loadCheckState();
-      // Restaurar backup de fotos do localStorage no localState
-      Object.keys(localStorage).forEach(function(k) {
-        if (k.indexOf('eco_foto_bk_') === 0) {
-          var fotoKey = k.replace('eco_foto_bk_', '');
-          if (!localState[fotoKey]) localState[fotoKey] = localStorage.getItem(k);
-        }
-      });
+      // Restaurar backup de fotos de HOJE do localStorage no localState (BUILD 436:
+      // a chave da foto não tem data — antes, foto de ontem reaparecia como de hoje)
+      try {
+        JSON.parse(localStorage.getItem('eco_foto_bk_keys_' + hoje) || '[]').forEach(function(fk) {
+          var bk = localStorage.getItem('eco_foto_bk_' + fk);
+          if (bk && !localState[fk]) localState[fk] = bk;
+        });
+      } catch(e) {}
       if (doc.exists && doc.data().state && doc.data().localDate === getLocalDate()) {
         try {
           var fbState = JSON.parse(doc.data().state);
@@ -3324,20 +3368,7 @@ function salvarFotoTipo(clId, idx, tipo, input) {
     _registrarHoraResposta(clId, idx);
 
     // Backup local da foto (evita perda se Firebase demorar ou conexão cair)
-    try {
-      var hoje2 = getLocalDate();
-      localStorage.setItem('eco_foto_bk_' + fotoKey, base64);
-      // Guardar data do backup para limpeza posterior
-      var bkKeys = JSON.parse(localStorage.getItem('eco_foto_bk_keys_'+hoje2) || '[]');
-      if (bkKeys.indexOf(fotoKey) < 0) { bkKeys.push(fotoKey); localStorage.setItem('eco_foto_bk_keys_'+hoje2, JSON.stringify(bkKeys)); }
-      // Limpar backups de dias anteriores
-      Object.keys(localStorage).forEach(function(lk) {
-        if (lk.indexOf('eco_foto_bk_keys_') === 0 && lk !== 'eco_foto_bk_keys_'+hoje2) {
-          try { var oldKeys = JSON.parse(localStorage.getItem(lk)||'[]'); oldKeys.forEach(function(ok){ localStorage.removeItem('eco_foto_bk_'+ok); }); } catch(e){}
-          localStorage.removeItem(lk);
-        }
-      });
-    } catch(e) {}
+    _guardarBackupFoto(fotoKey, base64);
 
     // Salvar foto separado no Firebase (nao no checkstate)
     var userId = S.currentUser ? S.currentUser.id : 'guest';
@@ -3391,12 +3422,7 @@ function salvarFotoMulti(clId, idx, input) {
     var fotoKey = clId+'_foto_multi_'+idx+'_'+slot;
     S.checkState[fotoKey] = base64;
     _registrarHoraResposta(clId, idx);
-    try {
-      var hojM = getLocalDate();
-      localStorage.setItem('eco_foto_bk_'+fotoKey, base64);
-      var bkKeysM = JSON.parse(localStorage.getItem('eco_foto_bk_keys_'+hojM)||'[]');
-      if (bkKeysM.indexOf(fotoKey)<0){bkKeysM.push(fotoKey);localStorage.setItem('eco_foto_bk_keys_'+hojM, JSON.stringify(bkKeysM));}
-    } catch(e){}
+    _guardarBackupFoto(fotoKey, base64);
     var userId = S.currentUser ? S.currentUser.id : 'guest';
     var today = getLocalDate();
     db.collection('fotos').doc(userId+'_'+today+'_'+clId+'_multi_'+idx+'_'+slot).set({
@@ -3966,19 +3992,17 @@ function limparPlanosAntigos() {
 
 function limparContagensAntigas() {
   var hoje = new Date().toISOString().slice(0, 10);
-  db.collection('contagens').get().then(function(snap) {
-    snap.docs.forEach(function(doc) {
-      if ((doc.data().data || '') < hoje) {
-        doc.ref.delete().catch(function() {});
-      }
-    });
+  // BUILD 436: só os vencidos (antes lia a coleção inteira a cada login)
+  db.collection('contagens').where('data', '<', hoje).get().then(function(snap) {
+    snap.docs.forEach(function(doc) { doc.ref.delete().catch(function() {}); });
   }).catch(function() {});
 }
 
 function loadPlanilhasDiarias(cb) {
   var hoje = new Date().toISOString().slice(0, 10);
   var myClient = (S.currentUser && S.currentUser.clienteId) || '';
-  db.collection('contagens').get().then(function(snap) {
+  // BUILD 436: só as planilhas de hoje (antes lia a coleção inteira no login e a cada aba Executar)
+  db.collection('contagens').where('tipo', '==', 'planilha_diaria').where('data', '==', hoje).get().then(function(snap) {
     _planilhaTemplates = {};
     snap.docs.forEach(function(doc) {
       var d = doc.data();
@@ -5358,7 +5382,7 @@ function switchCentralTab(tab, btn) {
   document.querySelectorAll('#central-tabs .tab').forEach(function(t){t.classList.remove('on');});
   if (btn) btn.classList.add('on');
   if (tab === 'plano') {
-    loadPlanosFromFirebase(function(){ renderCentralPlanos(); });
+    loadPlanosFromFirebase(function(){ renderCentralPlanos(); }, true);
     return;
   }
   if (tab === 'pendencias') {
@@ -10880,8 +10904,15 @@ function savePlanos(list) {
 function _gravarPlanoNoFirestore(plano) {
   if (db && plano) db.collection('planos').doc(plano.id).set(plano, {merge:true}).catch(function(){});
 }
-function loadPlanosFromFirebase(cb) {
-  db.collection('planos').get().then(function(snap){
+// BUILD 436 (04/11/26 — a cota grátis de 50 mil leituras/dia estourou de novo
+// com o 435): esta função lia a coleção INTEIRA (todos os clientes, resolvidos
+// de 30 dias) no login E a cada entrada na tela Checklist. Agora o padrão lê só
+// abertos/em andamento (é o que trava o envio e o que a loja precisa); a lista
+// completa (completo=true) fica pra página Plano de Ação e pra Central, que
+// também fazem a limpeza dos resolvidos antigos.
+function loadPlanosFromFirebase(cb, completo) {
+  var consulta = completo ? db.collection('planos') : db.collection('planos').where('status', 'in', ['aberto', 'andamento']);
+  consulta.get().then(function(snap){
     var myClient = (S.currentUser && S.currentUser.clienteId) || '';
     var remotos = snap.docs.map(function(d){ return d.data(); })
       .filter(function(p){ return (p.clienteId || 'economico') === myClient; });
@@ -10903,8 +10934,16 @@ function loadPlanosFromFirebase(cb) {
       }
       return r;
     });
+    if (!completo) {
+      // Mantém os resolvidos já em cache; aberto que sumiu do servidor foi
+      // resolvido/apagado em outro aparelho — sai do cache (e para de travar o envio).
+      var ids = {};
+      list.forEach(function(p){ ids[p.id] = true; });
+      getPlanos().forEach(function(p){ if (!ids[p.id] && p.status === 'resolvido') list.push(p); });
+    }
     _planosCache = list;
     try { localStorage.setItem(PLANO_KEY, JSON.stringify(list)); } catch(e) {}
+    if (completo) limparPlanosAntigos();
     if (cb) cb();
   }).catch(function(){ if (cb) cb(); });
 }
@@ -12119,9 +12158,10 @@ function gerarTokenCliente(clienteId) {
       '<div id="gt-preview" style="background:var(--gray);border-radius:8px;padding:10px 12px;font-size:12px;color:var(--t2);margin-bottom:14px"></div>'+
       '<div id="gt-err" style="color:var(--r);font-size:12px;min-height:16px;margin-bottom:8px"></div>'+
       '<div class="btn-row">'+
-        '<button class="btn btn-p" onclick="_confirmarGerarToken(\''+clienteId+'\')">Gerar Token</button>'+
-        '<button class="btn btn-s" onclick="document.getElementById(\'modal-gerar-token\').remove()">Cancelar</button>'+
+        '<button class="btn btn-p" onclick="_renovarLicencaAgora(\''+clienteId+'\')">✅ Renovar agora</button>'+
+        '<button class="btn btn-s" onclick="_confirmarGerarToken(\''+clienteId+'\')">🔑 Gerar token pro cliente digitar</button>'+
       '</div>'+
+      '<div style="font-size:11px;color:var(--t3);margin-top:8px">Renovar agora aplica a nova validade na hora, sem o cliente digitar nada — pode ser feito antes de vencer.</div>'+
     '</div></div>';
   document.body.insertAdjacentHTML('beforeend', html);
   _atualizarPreviewToken(validadeAtual);
@@ -12167,25 +12207,21 @@ function _confirmarGerarToken(clienteId) {
   // Checar se já existe token ativo (não cancelado, não vencido)
   var hoje = new Date(); hoje.setHours(0,0,0,0);
   db.collection('tokens').where('clienteId','==',clienteId).limit(20).get().then(function(snap) {
-    var ativoDoc = null;
+    // BUILD 437: só um token PENDENTE (não usado) é substituído. Token já usado
+    // é a licença vigente — antes era cancelado e a validade virava "ontem",
+    // bloqueando o cliente na hora; por isso só dava pra renovar depois de vencer.
+    var pendente = null;
     snap.forEach(function(doc) {
       var t = doc.data();
-      if (t.cancelado) return;
-      if (!t.usado) { if (!ativoDoc) ativoDoc = doc; }
-      else if (t.dataFim && new Date(t.dataFim) >= hoje) { if (!ativoDoc) ativoDoc = doc; }
+      if (!t.cancelado && !t.usado && !pendente) pendente = doc;
     });
 
-    if (ativoDoc) {
-      var tData = ativoDoc.data();
-      var descAtivo = tData.usado ? ('ativo até '+new Date(tData.dataFim).toLocaleDateString('pt-BR')) : 'ainda não usado';
-      var ok = confirm('⚠️ Já existe um token '+descAtivo+' para este cliente.\n\nToken: '+tData.token+'\n\nDeseja cancelar o token existente e gerar um novo?');
+    if (pendente) {
+      var tData = pendente.data();
+      var ok = confirm('⚠️ Já existe um token ainda não usado para este cliente.\n\nToken: '+tData.token+'\n\nCancelar esse e gerar um novo?');
       if (!ok) return;
-      // Cancelar token existente antes de gerar novo
-      var ontem = new Date(); ontem.setDate(ontem.getDate()-1);
-      ativoDoc.ref.update({ cancelado: true, canceladoEm: firebase.firestore.FieldValue.serverTimestamp() }).then(function() {
-        db.collection('clientes').doc(clienteId).update({ validade: ontem.toISOString().slice(0,10) }).then(function() {
-          _gerarNovoToken(clienteId, d, c);
-        });
+      pendente.ref.update({ cancelado: true, canceladoEm: firebase.firestore.FieldValue.serverTimestamp() }).then(function() {
+        _gerarNovoToken(clienteId, d, c);
       }).catch(function(e){ var el=document.getElementById('gt-err'); if(el) el.textContent='Erro ao cancelar token: '+e.message; });
     } else {
       _gerarNovoToken(clienteId, d, c);
@@ -12194,6 +12230,36 @@ function _confirmarGerarToken(clienteId) {
     // Se a query falhar (ex: sem índice para cancelado==false), tenta gerar direto
     _gerarNovoToken(clienteId, d, c);
   });
+}
+
+// BUILD 437 (Tiago, 04/11: "era pra ser aí no botão Token renovar, antes de
+// vencer"): aplica a nova validade direto no cliente (base = maior entre a
+// validade atual e hoje, + dias do modal) e registra em `tokens` como usado,
+// pra ficar no histórico (botão Tokens).
+function _renovarLicencaAgora(clienteId) {
+  var c = _clientesCache.find(function(x){ return x.id===clienteId; }) || {};
+  var d = _calcDiasToken(c.validade||'');
+  var el = document.getElementById('gt-err');
+  if (isNaN(d)||d<=0) { if (el) el.textContent='Valor inválido.'; return; }
+  var base = c.validade ? new Date(Math.max(new Date(c.validade), new Date())) : new Date();
+  base.setHours(0,0,0,0);
+  var nova = new Date(base); nova.setDate(nova.getDate()+d);
+  var novaStr = nova.toISOString().slice(0,10);
+  if (!confirm('Renovar '+clienteId+' por '+d+' dias?\n\nNova validade: '+nova.toLocaleDateString('pt-BR'))) return;
+  var batch = db.batch();
+  batch.update(db.collection('clientes').doc(clienteId), { validade: novaStr, ativo: true });
+  batch.set(db.collection('tokens').doc(), {
+    token: 'RENOVAÇÃO DIRETA', clienteId: clienteId, dias: d, usado: true, cancelado: false,
+    dataFim: novaStr, criadoEm: firebase.firestore.FieldValue.serverTimestamp(),
+    ativadoEm: firebase.firestore.FieldValue.serverTimestamp(),
+    criadoPor: S.currentUser ? S.currentUser.id : 'superadmin', usadoPor: S.currentUser ? S.currentUser.id : 'superadmin'
+  });
+  batch.commit().then(function() {
+    var m = document.getElementById('modal-gerar-token'); if (m) m.remove();
+    c.validade = novaStr; c.ativo = true;
+    _renderClientesLista();
+    showToast('✅ '+clienteId+' renovado até '+nova.toLocaleDateString('pt-BR'));
+  }).catch(function(e){ if (el) el.textContent='Erro ao renovar: '+e.message; });
 }
 
 function _gerarNovoToken(clienteId, d, c) {
@@ -12206,7 +12272,8 @@ function _gerarNovoToken(clienteId, d, c) {
     criadoPor: S.currentUser ? S.currentUser.id : 'superadmin'
   }).then(function() {
     var m = document.getElementById('modal-gerar-token'); if (m) m.remove();
-    var base = new Date(); base.setHours(0,0,0,0);
+    var base = c && c.validade ? new Date(Math.max(new Date(c.validade), new Date())) : new Date();
+    base.setHours(0,0,0,0);
     var nova = new Date(base); nova.setDate(nova.getDate()+d);
     var html2 =
       '<div id="modal-token-gerado" onclick="if(event.target===this)this.remove()" style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:3000;display:flex;align-items:center;justify-content:center;padding:16px">'+
@@ -12216,7 +12283,7 @@ function _gerarNovoToken(clienteId, d, c) {
         '<div style="background:var(--gray);border-radius:10px;padding:12px;margin-bottom:12px;font-size:12px;color:var(--t2);text-align:left">'+
           '<div>Cliente: <strong>'+clienteId+'</strong></div>'+
           '<div>Dias: <strong>'+d+'</strong></div>'+
-          '<div>Validade ao ativar: <strong>hoje + '+d+' dias ('+nova.toLocaleDateString('pt-BR')+')</strong></div>'+
+          '<div>Validade ao ativar: <strong>+'+d+' dias ('+nova.toLocaleDateString('pt-BR')+')</strong></div>'+
         '</div>'+
         '<div style="background:#1a1a2e;border-radius:12px;padding:16px;margin-bottom:14px">'+
           '<div style="font-family:monospace;font-size:24px;font-weight:800;color:#f1c40f;letter-spacing:3px" id="token-display">'+token+'</div>'+
