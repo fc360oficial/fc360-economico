@@ -1,5 +1,5 @@
 ﻿// Verificação de versão — roda antes de tudo
-var BUILD = '437';
+var BUILD = '440';
 var ETIQUETAS_API_URL = 'https://hhk0a8gt2cn.sn.mynetname.net/etiquetas-api';
 (function() {
   var vEl = document.getElementById('sb-versao');
@@ -943,6 +943,11 @@ function loadCheckState() {
   } catch(e) { return {}; }
 }
 
+// BUILD 439 (04/11/26): a cota de ESCRITA (20 mil/dia) também estourou. Cada
+// toque no checklist gravava o estado inteiro no Firestore. Agora o localStorage
+// continua imediato (é dele que a tela restaura) e o servidor recebe no máximo
+// 1 gravação a cada 20 s — e sempre que o app sai da tela ou vai enviar.
+var _checkStateTimer = null, _checkStatePendente = null;
 function saveCheckState() {
   try {
     // Salvar no localStorage SEM fotos (evita quota exceeded)
@@ -952,16 +957,25 @@ function saveCheckState() {
       stateParaSalvar[k] = S.checkState[k];
     });
     localStorage.setItem(getStateKey(), JSON.stringify(stateParaSalvar));
-    var userId = S.currentUser ? S.currentUser.id : 'guest';
-    var today = getLocalDate();
-    db.collection('checkstates').doc(userId+'_'+today).set({
-      userId: userId,
-      date: today,
-      localDate: getLocalDate(),
-      state: JSON.stringify(stateParaSalvar)
-    }).catch(function(){});
+    _checkStatePendente = stateParaSalvar;
+    if (!_checkStateTimer) _checkStateTimer = setTimeout(_flushCheckState, 20000);
   } catch(e) {}
 }
+function _flushCheckState() {
+  if (_checkStateTimer) { clearTimeout(_checkStateTimer); _checkStateTimer = null; }
+  var st = _checkStatePendente; _checkStatePendente = null;
+  if (!st || !S.currentUser) return;
+  var userId = S.currentUser.id;
+  var today = getLocalDate();
+  db.collection('checkstates').doc(userId+'_'+today).set({
+    userId: userId,
+    date: today,
+    localDate: today,
+    state: JSON.stringify(st)
+  }).catch(function(){});
+}
+document.addEventListener('visibilitychange', function(){ if (document.visibilityState === 'hidden') _flushCheckState(); });
+window.addEventListener('pagehide', _flushCheckState);
 
 function loadCheckStateFromFirebase(callback) {
   var userId = S.currentUser ? S.currentUser.id : 'guest';
@@ -2173,7 +2187,13 @@ function finalizarLogin(found) {
   document.getElementById('app').style.opacity='0.6';
 
   function iniciarApp() {
-    limparContagensAntigas();
+    // BUILD 440 (04/11/26): limparContagensAntigas() SAIU do login. O gráfico de
+    // uso do Firestore mostrou 49 mil leituras + 20 mil exclusões entre a
+    // madrugada e as 7h — antes de qualquer loja abrir — que é exatamente o
+    // perfil dessa limpeza (lia a coleção inteira e apagava os dias anteriores
+    // em TODO login). Documento velho em `contagens` não atrapalha ninguém:
+    // loadPlanilhasDiarias só lê os de hoje. Limpeza, se um dia precisar, é
+    // pelo servidor (.254), aos poucos, dentro da cota.
     setTimeout(mostrarConviteInstalar, 1500); // BUILD 431: "Deixe o celular pronto" (instalar + avisos)
     _registrarDispositivo();
     _inscreverPush();       // BUILD 432: push com o app fechado
@@ -3990,14 +4010,6 @@ function limparPlanosAntigos() {
   removidos.forEach(function(p){ db.collection('planos').doc(p.id).delete().catch(function(){}); });
 }
 
-function limparContagensAntigas() {
-  var hoje = new Date().toISOString().slice(0, 10);
-  // BUILD 436: só os vencidos (antes lia a coleção inteira a cada login)
-  db.collection('contagens').where('data', '<', hoje).get().then(function(snap) {
-    snap.docs.forEach(function(doc) { doc.ref.delete().catch(function() {}); });
-  }).catch(function() {});
-}
-
 function loadPlanilhasDiarias(cb) {
   var hoje = new Date().toISOString().slice(0, 10);
   var myClient = (S.currentUser && S.currentUser.clienteId) || '';
@@ -4274,6 +4286,7 @@ function confirmarEnviar(assinatura) {
   var clId = pendingEnviarId;
   var label = pendingEnviarLabel;
   if (!clId) return;
+  _flushCheckState(); // BUILD 439: estado pendente vai junto com o envio
   // Fecha o modal imediatamente para evitar duplo envio
   pendingEnviarId = null;
   pendingEnviarLabel = null;
@@ -12245,7 +12258,16 @@ function _renovarLicencaAgora(clienteId) {
   base.setHours(0,0,0,0);
   var nova = new Date(base); nova.setDate(nova.getDate()+d);
   var novaStr = nova.toISOString().slice(0,10);
-  if (!confirm('Renovar '+clienteId+' por '+d+' dias?\n\nNova validade: '+nova.toLocaleDateString('pt-BR'))) return;
+  // BUILD 438: sem confirm() (navegador com diálogos bloqueados fazia o botão
+  // "não fazer nada") — a prévia do modal já é a confirmação. Mostra estado e,
+  // se o servidor não responder (cota do Firestore), avisa que ficou na fila.
+  var btn = document.querySelector('#modal-gerar-token .btn-p');
+  if (btn) { btn.disabled = true; btn.textContent = '⏳ Renovando…'; }
+  if (el) el.textContent = '';
+  var demora = setTimeout(function(){
+    if (el) el.textContent = 'O servidor não respondeu. Se a cota do Firestore estiver estourada, a renovação fica na fila e aplica sozinha quando a cota voltar (~05h) — pode fechar.';
+    if (btn) { btn.disabled = false; btn.textContent = '✅ Renovar agora'; }
+  }, 12000);
   var batch = db.batch();
   batch.update(db.collection('clientes').doc(clienteId), { validade: novaStr, ativo: true });
   batch.set(db.collection('tokens').doc(), {
@@ -12255,11 +12277,16 @@ function _renovarLicencaAgora(clienteId) {
     criadoPor: S.currentUser ? S.currentUser.id : 'superadmin', usadoPor: S.currentUser ? S.currentUser.id : 'superadmin'
   });
   batch.commit().then(function() {
+    clearTimeout(demora);
     var m = document.getElementById('modal-gerar-token'); if (m) m.remove();
     c.validade = novaStr; c.ativo = true;
     _renderClientesLista();
     showToast('✅ '+clienteId+' renovado até '+nova.toLocaleDateString('pt-BR'));
-  }).catch(function(e){ if (el) el.textContent='Erro ao renovar: '+e.message; });
+  }).catch(function(e){
+    clearTimeout(demora);
+    if (btn) { btn.disabled = false; btn.textContent = '✅ Renovar agora'; }
+    if (el) el.textContent='Erro ao renovar: '+e.message;
+  });
 }
 
 function _gerarNovoToken(clienteId, d, c) {
