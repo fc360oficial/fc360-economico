@@ -71,7 +71,18 @@ function ouvir(nome, consulta) {
   });
 }
 let unsubResultados = null, diaResultados = '';
+// BUILD 443 (05/11/26): os envios do checklist moram no Postgres do .254 (FC360 API).
+// Com DATABASE_URL no .env, consulta a tabela `resultado` a cada tick (≤ 1 min, só o dia);
+// sem DATABASE_URL cai no listener antigo do Firestore (transição).
+const pg = process.env.DATABASE_URL ? new (require('pg').Pool)({ connectionString: process.env.DATABASE_URL, max: 2 }) : null;
 async function ouvirResultadosDoDia() {
+  if (pg) {
+    const { rows } = await pg.query('SELECT id, dados FROM resultado WHERE date_iso = $1', [H.iso]);
+    E.resultados.clear();
+    for (const r of rows) E.resultados.set(r.id, { id: r.id, _doc: r.id, ...r.dados });
+    diaResultados = H.iso;
+    return;
+  }
   if (diaResultados === H.iso) return;
   if (unsubResultados) unsubResultados();
   E.resultados.clear();
@@ -109,6 +120,7 @@ async function tick() {
   const antes = H.iso;
   H = agoraLocal();
   if (H.iso !== antes) abrirDia();
+  if (pg) await carregarDocumentos();
   await ouvirResultadosDoDia();
   fila = [];
   const usuarios = [...E.usuarios.values()].filter(u => u.ativo !== false);
@@ -194,7 +206,8 @@ async function tick() {
         try { await webpush.sendNotification({ endpoint: sub.endpoint, keys: sub.keys }, payload, { TTL: 6 * 3600 }); ok++; }
         catch (e) {
           if (e.statusCode === 404 || e.statusCode === 410) { // inscrição morta (app desinstalado / permissão tirada)
-            await db.collection('usuarios').doc(u._doc).update({ ['push.' + chave]: FieldValue.delete() }).catch(() => {});
+            if (pg) await pg.query("UPDATE documento SET dados = dados #- $2::text[], atualizado_em = now() WHERE colecao='usuarios' AND id=$1", [u._doc, ['push', chave]]).catch(() => {});
+            else await db.collection('usuarios').doc(u._doc).update({ ['push.' + chave]: FieldValue.delete() }).catch(() => {});
             removidas++;
           } else { falha++; console.log('falha', u.nome, e.statusCode || e.message); }
         }
@@ -207,16 +220,32 @@ async function tick() {
   console.log(`${new Date().toISOString()} ${H.iso} ${String(Math.floor(H.min / 60)).padStart(2, '0')}h — ${fila.length} aviso(s), ${ok} entregue(s), ${falha} falha(s), ${removidas} inscrição(ões) removida(s)${DRY ? ' [DRY]' : ''}`);
 }
 
+// Fase 3: com DATABASE_URL, tudo vem da tabela `documento` (recarregada a cada tick — são
+// poucas centenas de linhas); sem DATABASE_URL seguem os listeners do Firestore.
+async function carregarDocumentos() {
+  const { rows } = await pg.query("SELECT colecao, id, dados FROM documento WHERE colecao IN ('usuarios','checklists','clientes','config') OR (colecao='planos' AND dados->>'status' IN ('aberto','andamento'))");
+  for (const k of ['usuarios', 'checklists', 'planos', 'clientes']) E[k].clear();
+  E.repos = {};
+  for (const r of rows) {
+    if (r.colecao === 'config') { if (r.id === 'repos') E.repos = r.dados; continue; }
+    E[r.colecao].set(r.id, { id: r.id, _doc: r.id, ...r.dados });
+  }
+}
 async function iniciar() {
-  const reposDoc = await db.collection('config').doc('repos').get();
-  E.repos = reposDoc.exists ? reposDoc.data() : {};
-  await Promise.all([
-    ouvir('usuarios', db.collection('usuarios')),
-    ouvir('checklists', db.collection('checklists')),
-    ouvir('planos', db.collection('planos').where('status', 'in', ['aberto', 'andamento'])),
-    ouvir('clientes', db.collection('clientes')),
-    ouvirResultadosDoDia()
-  ]);
+  if (pg) {
+    await carregarDocumentos();
+    await ouvirResultadosDoDia();
+  } else {
+    const reposDoc = await db.collection('config').doc('repos').get();
+    E.repos = reposDoc.exists ? reposDoc.data() : {};
+    await Promise.all([
+      ouvir('usuarios', db.collection('usuarios')),
+      ouvir('checklists', db.collection('checklists')),
+      ouvir('planos', db.collection('planos').where('status', 'in', ['aberto', 'andamento'])),
+      ouvir('clientes', db.collection('clientes')),
+      ouvirResultadosDoDia()
+    ]);
+  }
   console.log(`${new Date().toISOString()} iniciado — ${E.usuarios.size} usuários, ${E.checklists.size} checklists, ${E.planos.size} planos abertos, ${E.resultados.size} envios hoje${DRY ? ' [DRY]' : ''}`);
   let rodando = false;
   const ciclo = async () => {
